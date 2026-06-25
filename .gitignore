@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+
+# scanned books and generated artifacts — large binaries
+books/input/*
+books/output/*
+!books/input/.gitkeep
+!books/output/.gitkeep
