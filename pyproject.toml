@@ -5,4 +5,11 @@ description = "Research pipeline comparing OCR/VLM approaches for converting sca
 requires-python = ">=3.14"
 dependencies = [
     "pymupdf>=1.27.2.3",
+    "surya-ocr>=0.20.0",
 ]
+
+[tool.uv]
+# surya-ocr 0.20.0 caps pillow<11, but pillow<11 has no cp314 wheels (Python 3.14).
+# pillow's API is backward-compatible for surya's usage, so lift the stale ceiling
+# and let uv resolve pillow 12.x, which ships cp314 wheels.
+override-dependencies = ["pillow>=10.2.0"]
