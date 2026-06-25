@@ -7,13 +7,13 @@ user-invocable: false
 ## Commit message format
 
 ```
-<type>(<scope>): <subject> (#<issue>)
+<type>(<scope>): <subject>
 
 <body>
 ```
 
 - `<scope>` is optional
-- `(#<issue>)` is the GitLab issue number — **required** unless the commit clearly falls outside the scope of any open issue (e.g. a CI/CD fix committed while working on an unrelated feature issue)
+- This project has no issue tracker — do not add an `(#<issue>)` reference
 
 ## Types
 
@@ -39,11 +39,11 @@ Separate from the subject with a blank line. Use bullet points to explain **what
 
 Example:
 ```
-feat(enricher): add exponential backoff for Enfusion API retries (#8)
+feat(experiments): add Consensus Entropy scoring across model outputs
 
-- Add retry logic with up to 10 attempts on 5xx responses
-- Preserve original ticker on enrichment failure for partial pipeline runs
-- Needed to handle intermittent Enfusion API instability in production
+- Compute per-token agreement across all Bag of Experts model runs
+- Flag pages below an agreement threshold for manual review
+- Training-free signal — needed before a ground-truth eval set exists
 ```
 
 ## Breaking changes
@@ -51,18 +51,19 @@ feat(enricher): add exponential backoff for Enfusion API retries (#8)
 If a commit introduces a breaking change, add a `BREAKING CHANGE:` line in the body:
 
 ```
-refactor(loader): rename raw table finalization function (#11)
+refactor(pipeline): rename page classification entrypoint
 
-- Rename dbRawFinalization to dbReplaceFinalization to reflect drop+rename strategy
+- Rename classify_page to classify_page_keep_discard to match the
+  keep/discard convention used elsewhere in the cleanup layer
 
-BREAKING CHANGE: dbRawFinalization removed; callers must use dbReplaceFinalization
+BREAKING CHANGE: classify_page removed; callers must use classify_page_keep_discard
 ```
 
 ## Examples
 
 ```
-feat(extractor): add CSV-based ticker extraction (#5)
-fix(loader): handle duplicate tickers in filtered upsert (#3)
-docs: add environment variable table to README (#2)
-chore: configure Cloud Run job deployment script
+feat(experiments): add ROVER-style word voting across model outputs
+fix(pipeline): handle empty bbox list in grounding verification
+docs: add Stage 1 model shortlist to brainstorm.md
+chore: bump uv lockfile after adding pandoc dependency
 ```

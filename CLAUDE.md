@@ -23,6 +23,9 @@ rejected paths (e.g. a classic-OCR-first pipeline).
   threshold) — invoke the `experiments` skill to add a backlink instead of re-deriving the reasoning.
 - When it's unclear why some code or decision is the way it is — invoke the `experiments` skill
   before guessing.
+- Before starting any non-trivial change, or when asked to create a branch — invoke the
+  `git-workflow` skill.
+- When creating/reviewing a GitHub issue or PR, or checking CI/PR status — invoke the `github` skill.
 
 ## Layout
 - `books/input/` — source scanned PDFs (do not commit — large binaries)
