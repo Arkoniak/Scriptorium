@@ -1,4 +1,4 @@
-# PDF-сканы → чистый EPUB (OCR + нейросетевые уточнения)
+# Scriptorium — PDF-сканы → чистый EPUB (OCR + нейросетевые уточнения)
 
 ## Status
 Active

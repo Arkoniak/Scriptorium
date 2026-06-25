@@ -1,13 +1,15 @@
-# Pdf2Epub
+# Scriptorium
 
 ## Language policy
 - Converse with the user in whatever language they use.
 - All documentation, code comments, commit messages, and docstrings must be written strictly in English, regardless of conversation language.
 
 ## Project
-Research / self-learning project: build a pipeline that converts a scanned PDF book into a clean EPUB,
-focused on OCR/VLM recognition approaches. Goal: compare classic OCR and neural (VLM) approaches,
-evaluate accuracy/cleanliness of results, and assemble a staged plan of increasing complexity.
+Scriptorium is a research / self-learning project: build a pipeline that converts a scanned PDF book
+into a clean EPUB, focused on OCR/VLM recognition approaches. Goal: compare classic OCR and neural
+(VLM) approaches, evaluate accuracy/cleanliness of results, and assemble a staged plan of increasing
+complexity. The name reflects the actual focus — not just conversion, but verified, monk-scriptorium-grade
+transcription of a scanned page into trustworthy text.
 
 Full brief, accumulated ideas, model shortlist, and staged plan live in `docs/brainstorm.md`. Re-read it
 before making architectural decisions — it records open questions and rejected ideas; don't repeat
