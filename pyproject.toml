@@ -3,4 +3,6 @@ name = "scriptorium"
 version = "0.1.0"
 description = "Research pipeline comparing OCR/VLM approaches for converting scanned PDF books into clean EPUBs"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "pymupdf>=1.27.2.3",
+]
