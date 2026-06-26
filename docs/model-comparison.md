@@ -42,10 +42,17 @@ context reset. **Update it whenever a model is evaluated or a new capability is 
 
 Legend: ✅ yes / ❌ no / ➖ partial-or-weak / ⏳ not yet measured.
 
+## Excluded
+
+- **Gemma 4 E4B** (general VLM, Google lineage) — **evaluated and dropped.** Its GGUF vision can't read
+  dense scanned body text: at the default budget it fabricates the body; raising resolution crashes
+  (ubatch), then loops, then fabricates fluently. Fabrication would poison the consensus, so it is out
+  of the ensemble. See [gemma-vision-failure](experiments/2026-06-26-gemma-vision-failure.md).
+
 ## Open cross-model questions
 
-- Do **general-purpose** VLMs (Qwen3-VL, Gemma 4) match the specialists on dense scanned prose, and do
-  they preserve inline emphasis where Unlimited does not?
+- Do **general-purpose** VLMs match the specialists on dense scanned prose? Mixed: Qwen3-VL yes (and it
+  preserves inline emphasis where Unlimited does not); Gemma 4 E4B no (excluded — fabricates dense text).
 - ROVER / Consensus needs ≥3 independent models; Surya and Unlimited already show **complementary**
   errors on stylized cover logos — the strongest ensemble signal so far.
 - Test-set gap: no tables or footnotes in the current book — structure-markup differences may widen
