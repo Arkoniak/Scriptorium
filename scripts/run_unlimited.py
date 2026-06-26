@@ -13,6 +13,7 @@ this model has no grounding — that is wrong (README-based); the remote code su
 """
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -22,6 +23,16 @@ from importlib.metadata import version
 from pathlib import Path
 
 MODEL_NAME = "baidu/Unlimited-OCR"
+PARSING_PROMPT = "<image>document parsing."
+GROUNDING_PROMPT = "<image>\n<|grounding|>Given the layout of the image."
+
+# Grounding output is a sequence of "<|ref|>label<|/ref|><|det|>[box]<|/det|>text" or the shorter
+# "<|det|>label [box]<|/det|>text" form. Coordinates are 0-1000 normalized.
+GROUNDING_RE = re.compile(
+    r"<\|ref\|>(?P<rlabel>.*?)<\|/ref\|><\|det\|>(?P<rbox>.*?)<\|/det\|>"
+    r"|<\|det\|>\s*(?P<dlabel>[A-Za-z_][\w-]*)\s*(?P<dbox>\[[^\]]+\])\s*<\|/det\|>",
+    re.DOTALL,
+)
 
 
 def page_number(path: Path) -> int:
@@ -34,6 +45,53 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
+def _norm_boxes(box_str: str) -> list[list[float]]:
+    """Parse a det box string into a list of [x1,y1,x2,y2] (0-1000 coords)."""
+    try:
+        coords = ast.literal_eval(box_str.strip())
+    except (ValueError, SyntaxError):
+        return []
+    if coords and isinstance(coords[0], (int, float)):
+        coords = [coords]
+    return [list(c) for c in coords if len(c) >= 4]
+
+
+def parse_grounding(raw: str, width: int, height: int) -> tuple[str, list[dict]]:
+    """Parse Unlimited-OCR grounding output into (clean_text, blocks).
+
+    Each block carries its label, the text following its tag, and the bbox in both the model's
+    0-1000 space (bbox_norm) and pixels (bbox, scaled by the page size). Any preamble before the
+    first tag — the model sometimes emits a spurious refusal note — is dropped by construction.
+    """
+    matches = list(GROUNDING_RE.finditer(raw))
+    blocks = []
+    texts = []
+    for i, match in enumerate(matches):
+        label = (match.group("rlabel") or match.group("dlabel") or "").strip()
+        box_str = match.group("rbox") or match.group("dbox") or "[]"
+        text_end = matches[i + 1].start() if i + 1 < len(matches) else len(raw)
+        block_text = raw[match.end() : text_end].strip()
+
+        boxes_norm = _norm_boxes(box_str)
+        boxes_px = [
+            [round(b[0] / 1000 * width), round(b[1] / 1000 * height),
+             round(b[2] / 1000 * width), round(b[3] / 1000 * height)]
+            for b in boxes_norm
+        ]
+        blocks.append(
+            {
+                "text": block_text,
+                "label": label,
+                "bbox": boxes_px[0] if boxes_px else None,
+                "bbox_all": boxes_px,
+                "bbox_norm": boxes_norm,
+            }
+        )
+        if block_text:
+            texts.append(block_text)
+    return "\n\n".join(texts), blocks
+
+
 def run_unlimited(
     book: str,
     pages_dir: Path,
@@ -41,8 +99,15 @@ def run_unlimited(
     pages_filter: set[int] | None,
     label: str,
     prompt: str,
+    grounding: bool,
 ) -> dict:
     """Run Unlimited-OCR per page and write a normalized run; return the manifest.
+
+    Two modes:
+      - default: 'document parsing.' prompt -> Markdown via infer()'s post-processing (also
+        extracts figures to <page_out>/images/); blocks stay empty.
+      - grounding: '<|grounding|>...' prompt + eval_mode=True returns the raw tagged output, which
+        we parse into structured blocks (text + label + bbox). Raw output is kept for audit.
 
     Raises ValueError if no matching page images are found.
     """
@@ -58,6 +123,7 @@ def run_unlimited(
 
     # Lazy imports: only pay the torch/transformers load when actually running.
     import torch
+    from PIL import Image
     from transformers import AutoModel, AutoTokenizer
 
     run_id = f"{utc_now()}__unlimited__{label}"
@@ -84,11 +150,8 @@ def run_unlimited(
         page_out.mkdir(parents=True, exist_ok=True)
 
         page_start = time.time()
-        # "gundam" single-image mode (base_size=1024, image_size=640, crop). infer writes
-        # <page_out>/result.md (Markdown) and extracts any figures under <page_out>/images/.
-        model.infer(
-            tokenizer,
-            prompt=prompt,
+        # Shared "gundam" single-image preprocessing (base_size=1024, image_size=640, crop).
+        infer_kwargs = dict(
             image_file=str(src_path),
             output_path=str(page_out),
             base_size=1024,
@@ -97,22 +160,31 @@ def run_unlimited(
             max_length=32768,
             no_repeat_ngram_size=35,
             ngram_window=128,
-            save_results=True,
         )
+        if grounding:
+            # eval_mode returns the raw tagged output (no post-processing / box drawing).
+            raw = model.infer(tokenizer, prompt=prompt, eval_mode=True, save_results=False, **infer_kwargs)
+            (page_out / "raw.txt").write_text(raw, encoding="utf-8")
+            width, height = Image.open(src_path).size
+            text, blocks = parse_grounding(raw, width, height)
+            page_format = "grounding"
+        else:
+            # infer writes <page_out>/result.md (Markdown) and figures under <page_out>/images/.
+            model.infer(tokenizer, prompt=prompt, save_results=True, **infer_kwargs)
+            result_md = page_out / "result.md"
+            text = result_md.read_text(encoding="utf-8") if result_md.exists() else ""
+            blocks = []
+            page_format = "markdown"
         per_page_s[str(page_no)] = round(time.time() - page_start, 2)
 
-        result_md = page_out / "result.md"
-        text = result_md.read_text(encoding="utf-8") if result_md.exists() else ""
         (run_pages_dir / f"page_{page_no:03d}.json").write_text(
             json.dumps(
                 {
                     "page": page_no,
                     "source_image": src_path.name,
                     "text": text,
-                    "format": "markdown",
-                    # Default 'document parsing.' emits no boxes; grounding boxes are consumed
-                    # by the model's post-processing, so blocks stay empty here.
-                    "blocks": [],
+                    "format": page_format,
+                    "blocks": blocks,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -128,8 +200,9 @@ def run_unlimited(
         "run_id": run_id,
         "run_dir": str(run_dir),
         "model": "unlimited-ocr",
-        "mode": "gundam_per_page",
+        "mode": "grounding_per_page" if grounding else "gundam_per_page",
         "prompt": prompt,
+        "coordinate_space": "0-1000 normalized; bbox is scaled to pixels, bbox_norm keeps original" if grounding else None,
         "library": f"transformers=={version('transformers')}",
         "model_checkpoint": MODEL_NAME,
         "book": book,
@@ -160,15 +233,21 @@ def main() -> None:
     parser.add_argument("--pages", help="Optional page filter, e.g. '1,5,12' (default: all images found)")
     parser.add_argument("--label", default="default", help="Human label for this run, used in the run id")
     parser.add_argument(
+        "--grounding",
+        action="store_true",
+        help="Grounding mode: capture <|det|> label+bbox per block as structured blocks (text+bbox+label).",
+    )
+    parser.add_argument(
         "--prompt",
-        default="<image>document parsing.",
-        help="Full prompt incl. the <image> token. Use '<image>\\n<|grounding|>Given the layout of "
-        "the image.' for grounding/bbox mode.",
+        default=None,
+        help="Override the prompt (incl. the <image> token). Defaults to the grounding prompt with "
+        "--grounding, else the document-parsing prompt.",
     )
     args = parser.parse_args()
 
     pages_dir = args.pages_dir or (args.out_root / args.book / "pages")
     pages_filter = {int(p) for p in args.pages.split(",")} if args.pages else None
+    prompt = args.prompt or (GROUNDING_PROMPT if args.grounding else PARSING_PROMPT)
 
     try:
         manifest = run_unlimited(
@@ -177,7 +256,8 @@ def main() -> None:
             out_root=args.out_root,
             pages_filter=pages_filter,
             label=args.label,
-            prompt=args.prompt,
+            prompt=prompt,
+            grounding=args.grounding,
         )
     except ValueError as error:
         parser.error(str(error))
