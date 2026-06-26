@@ -23,6 +23,9 @@ rejected paths (e.g. a classic-OCR-first pipeline).
   threshold) — invoke the `experiments` skill to add a backlink instead of re-deriving the reasoning.
 - When it's unclear why some code or decision is the way it is — invoke the `experiments` skill
   before guessing.
+- When evaluating, comparing, or adding an OCR/VLM model — read and update `docs/model-comparison.md`
+  (the capability matrix: VRAM fit, inline emphasis, bounding boxes, layout labels, figure
+  extraction, text hygiene, speed, runtime). Keep it current so the tracking survives a context reset.
 - Before starting any non-trivial change, or when asked to create a branch — invoke the
   `git-workflow` skill.
 - When creating/reviewing a GitHub issue or PR, or checking CI/PR status — invoke the `github` skill.
@@ -31,6 +34,7 @@ rejected paths (e.g. a classic-OCR-first pipeline).
 - `books/input/` — source scanned PDFs (do not commit — large binaries)
 - `books/output/` — generated EPUBs/intermediate artifacts (do not commit)
 - `docs/brainstorm.md` — single source of truth for research ideas/plan
+- `docs/model-comparison.md` — capability matrix across evaluated OCR/VLM models
 - `docs/experiments/` — research log: one file per experiment, see `.claude/skills/experiments/SKILL.md`
 
 ## Machine context (Manjaro Linux)
