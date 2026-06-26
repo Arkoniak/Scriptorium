@@ -27,18 +27,18 @@ context reset. **Update it whenever a model is evaluated or a new capability is 
 
 | Criterion | Surya 2 | Unlimited-OCR | Qwen3-VL-8B |
 |---|---|---|---|
-| Fits 12GB | ✅ (no docker; GGUF backend) | ✅ but tight — needs `expandable_segments` (bf16 safetensors) | ⏳ planned: Q4_K_M GGUF + mmproj |
-| Runtime | `surya-ocr` pkg → spawns llama-server (GGUF) | transformers + `trust_remote_code`, in-process | llama-server GGUF (`--mmproj`) |
-| Speed | ~6.4 s/page | ~5.2 s/page | ⏳ |
-| Output format | per-block HTML | Markdown (default) / raw grounding text | ⏳ (Qwen HTML expected) |
-| **Inline emphasis** | ✅ `<i>` | ❌ dropped under every prompt | ⏳ (key question) |
-| Bounding boxes | ✅ polygon + bbox + confidence | ✅ via grounding mode (0–1000 coords) | ⏳ |
-| Layout labels | ✅ PageHeader/Footer/SectionHeader/Picture/Text | ✅ in grounding (title/text/image) | ⏳ |
-| Figure extraction | ❌ labels Picture, no raster | ✅ crops illustrations to image files | ⏳ |
-| Text hygiene | ✅ de-hyphenates, keeps curly quotes | ➖ keeps soft-hyphens, inconsistent quotes | ⏳ |
-| Multi-page one-pass | ❌ per-page | ✅ flat-KV (headline feature; untested) | ⏳ |
+| Fits 12GB | ✅ (no docker; GGUF backend) | ✅ but tight — needs `expandable_segments` (bf16 safetensors) | ✅ comfortable (Q4_K_M + f16 mmproj) |
+| Runtime | `surya-ocr` pkg → spawns llama-server (GGUF) | transformers + `trust_remote_code`, in-process | we spawn llama-server (GGUF + `--mmproj`) |
+| Speed | ~6.4 s/page | ~5.2 s/page | ~8.5 s/page |
+| Output format | per-block HTML | Markdown (default) / raw grounding text | Markdown (headings, emphasis) |
+| **Inline emphasis** | ✅ `<i>` | ❌ dropped under every prompt | ✅ `*italic*` (recall good; precision unaudited) |
+| Bounding boxes | ✅ polygon + bbox + confidence | ✅ via grounding mode (0–1000 coords) | ❌ (plain chat API) |
+| Layout labels | ✅ PageHeader/Footer/SectionHeader/Picture/Text | ✅ in grounding (title/text/image) | ➖ Markdown headings only |
+| Figure extraction | ❌ labels Picture, no raster | ✅ crops illustrations to image files | ❌ |
+| Text hygiene | ✅ de-hyphenates, keeps curly quotes | ➖ keeps soft-hyphens, inconsistent quotes | ✅ curly quotes; omits running headers |
+| Multi-page one-pass | ❌ per-page | ✅ flat-KV (headline feature; untested) | ❌ per-page |
 | Lineage | Datalab (own arch) | DeepSeek-OCR successor (Baidu) | Alibaba/Qwen (general-purpose) |
-| Experiments | [surya-baseline](experiments/2026-06-25-surya-baseline.md) | [baseline](experiments/2026-06-25-unlimited-baseline.md), [grounding](experiments/2026-06-26-unlimited-grounding.md) | — |
+| Experiments | [surya-baseline](experiments/2026-06-25-surya-baseline.md) | [baseline](experiments/2026-06-25-unlimited-baseline.md), [grounding](experiments/2026-06-26-unlimited-grounding.md) | [baseline](experiments/2026-06-26-qwen3vl-baseline.md) |
 
 Legend: ✅ yes / ❌ no / ➖ partial-or-weak / ⏳ not yet measured.
 
