@@ -25,20 +25,20 @@ context reset. **Update it whenever a model is evaluated or a new capability is 
 
 ## Matrix
 
-| Criterion | Surya 2 | Unlimited-OCR | Qwen3-VL-8B |
-|---|---|---|---|
-| Fits 12GB | ✅ (no docker; GGUF backend) | ✅ but tight — needs `expandable_segments` (bf16 safetensors) | ✅ comfortable (Q4_K_M + f16 mmproj) |
-| Runtime | `surya-ocr` pkg → spawns llama-server (GGUF) | transformers + `trust_remote_code`, in-process | we spawn llama-server (GGUF + `--mmproj`) |
-| Speed | ~6.4 s/page | ~5.2 s/page | ~8.5 s/page |
-| Output format | per-block HTML | Markdown (default) / raw grounding text | Markdown (headings, emphasis) |
-| **Inline emphasis** | ✅ `<i>` | ❌ dropped under every prompt | ✅ `*italic*` (recall good; precision unaudited) |
-| Bounding boxes | ✅ polygon + bbox + confidence | ✅ via grounding mode (0–1000 coords) | ❌ (plain chat API) |
-| Layout labels | ✅ PageHeader/Footer/SectionHeader/Picture/Text | ✅ in grounding (title/text/image) | ➖ Markdown headings only |
-| Figure extraction | ❌ labels Picture, no raster | ✅ crops illustrations to image files | ❌ |
-| Text hygiene | ✅ de-hyphenates, keeps curly quotes | ➖ keeps soft-hyphens, inconsistent quotes | ✅ curly quotes; omits running headers |
-| Multi-page one-pass | ❌ per-page | ✅ flat-KV (headline feature; untested) | ❌ per-page |
-| Lineage | Datalab (own arch) | DeepSeek-OCR successor (Baidu) | Alibaba/Qwen (general-purpose) |
-| Experiments | [surya-baseline](experiments/2026-06-25-surya-baseline.md) | [baseline](experiments/2026-06-25-unlimited-baseline.md), [grounding](experiments/2026-06-26-unlimited-grounding.md) | [baseline](experiments/2026-06-26-qwen3vl-baseline.md) |
+| Criterion | Surya 2 | Unlimited-OCR | Qwen3-VL-8B | GLM-OCR (0.9B) |
+|---|---|---|---|---|
+| Fits 12GB | ✅ (no docker; GGUF backend) | ✅ but tight — needs `expandable_segments` (bf16 safetensors) | ✅ comfortable (Q4_K_M + f16 mmproj) | ✅ trivially (~2GB, 0.9B) |
+| Runtime | `surya-ocr` pkg → spawns llama-server (GGUF) | transformers + `trust_remote_code`, in-process | we spawn llama-server (GGUF + `--mmproj`) | transformers in-process; needs 5.x (isolated via `uv run --with`) |
+| Speed | ~6.4 s/page | ~5.2 s/page | ~8.5 s/page | **~3.9 s/page** (fastest) |
+| Output format | per-block HTML | Markdown (default) / raw grounding text | Markdown (headings, emphasis) | plain text / Markdown |
+| **Inline emphasis** | ✅ `<i>` | ❌ dropped under every prompt | ✅ `*italic*` (recall good; precision unaudited) | ❌ dropped |
+| Bounding boxes | ✅ polygon + bbox + confidence | ✅ via grounding mode (0–1000 coords) | ❌ (plain chat API) | ❌ (plain mode; JSON/grounding modes untested) |
+| Layout labels | ✅ PageHeader/Footer/SectionHeader/Picture/Text | ✅ in grounding (title/text/image) | ➖ Markdown headings only | ➖ Markdown only |
+| Figure extraction | ❌ labels Picture, no raster | ✅ crops illustrations to image files | ❌ | ❌ |
+| Text hygiene | ✅ de-hyphenates, keeps curly quotes | ➖ keeps soft-hyphens, inconsistent quotes | ✅ curly quotes; omits running headers | ✅ de-hyphenates, curly quotes |
+| Multi-page one-pass | ❌ per-page | ✅ flat-KV (headline feature; untested) | ❌ per-page | ❌ per-page |
+| Lineage | Datalab (own arch) | DeepSeek-OCR successor (Baidu) | Alibaba/Qwen (general-purpose) | Zhipu / Z.ai (GLM) |
+| Experiments | [surya-baseline](experiments/2026-06-25-surya-baseline.md) | [baseline](experiments/2026-06-25-unlimited-baseline.md), [grounding](experiments/2026-06-26-unlimited-grounding.md) | [baseline](experiments/2026-06-26-qwen3vl-baseline.md) | [baseline](experiments/2026-06-26-glm-ocr-baseline.md) |
 
 Legend: ✅ yes / ❌ no / ➖ partial-or-weak / ⏳ not yet measured.
 
