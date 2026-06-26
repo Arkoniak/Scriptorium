@@ -51,7 +51,7 @@ does their (dis)agreement tell us?
   transcribed inline rather than labeled.
 
 ## Correction to brainstorm.md
-brainstorm.md claims Unlimited-OCR has **no grounding** ("судя по README"). That is wrong — verified
+brainstorm.md claims Unlimited-OCR has **no grounding** ("per the README"). That is wrong — verified
 from the model's remote code (`modeling_unlimitedocr.py`): it parses `<|ref|>label<|/ref|><|det|>[box]
 <|/det|>` tokens and has a `<|grounding|>Given the layout of the image.` prompt (same family as
 DeepSeek-OCR, which it explicitly extends). The Stage 2 engine tension "Unlimited-OCR SOTA but no
