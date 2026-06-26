@@ -49,6 +49,17 @@ Legend: ✅ yes / ❌ no / ➖ partial-or-weak / ⏳ not yet measured.
   (ubatch), then loops, then fabricates fluently. Fabrication would poison the consensus, so it is out
   of the ensemble. See [gemma-vision-failure](experiments/2026-06-26-gemma-vision-failure.md).
 
+## Shortlist — not yet integrated (revisit later)
+
+- **PaddleOCR-VL** (0.9B, multilingual) — **OmniDocBench accuracy leader** (v1.6 ≈ 96.33%). **Deferred:**
+  the transformers integration is a version swamp and the native arch is ~454s/page; the viable
+  runtimes are vLLM (best fit — OpenAI API) or the official PaddlePaddle pipeline. Worth getting right
+  later (leader + multilingual). See [paddleocr-vl-deferred](experiments/2026-06-26-paddleocr-vl-deferred.md).
+- **FireRed OCR** — surfaced as a "best balanced operational choice" in 2026 OCR roundups; not yet
+  evaluated.
+- **DeepSeek-OCR**, **dots.ocr**, **RolmOCR** — original Stage 1 shortlist, still untried (DeepSeek-OCR
+  is the parent of Unlimited; dots.ocr wants vLLM; RolmOCR is a Qwen2.5-VL fine-tune).
+
 ## Open cross-model questions
 
 - Do **general-purpose** VLMs match the specialists on dense scanned prose? Mixed: Qwen3-VL yes (and it
