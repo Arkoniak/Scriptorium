@@ -19,3 +19,11 @@ dependencies = [
 # pillow's API is backward-compatible for surya's usage, so lift the stale ceiling
 # and let uv resolve pillow 12.x, which ships cp314 wheels.
 override-dependencies = ["pillow>=10.2.0"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

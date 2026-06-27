@@ -17,33 +17,72 @@ import json
 import math
 import re
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
 # --- normalization ---------------------------------------------------------------------------------
 
-_MD = [
-    (re.compile(r"!\[[^\]]*\]\([^)]*\)"), " "),   # markdown images
-    (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),  # markdown links -> link text
-    (re.compile(r"</?[a-zA-Z][^>]*>"), " "),       # html tags (e.g. Surya's <i>)
-    (re.compile(r"[*_`#>]"), " "),                  # emphasis / heading / code / quote markers
+# Text-level rules: regex substitutions applied to raw text before tokenization.
+_MARKUP_RULES: list[tuple[str, re.Pattern, str]] = [
+    ('md_images',  re.compile(r'!\[[^\]]*\]\([^)]*\)'), ' '),   # markdown images
+    ('md_links',   re.compile(r'\[([^\]]*)\]\([^)]*\)'), r'\1'),  # markdown links -> link text
+    ('html_tags',  re.compile(r'</?[a-zA-Z][^>]*>'), ' '),        # html tags (e.g. Surya's <i>)
+    ('md_markers', re.compile(r'[*_`#>]'), ' '),                   # emphasis / heading / code / quote markers
+]
+
+
+def _dehyphenate(tokens: list[str]) -> list[str]:
+    """Merge line-break hyphen splits: [“edu-”, “cational”] -> [“educational”]."""
+    result: list[str] = []
+    i = 0
+    while i < len(tokens):
+        if i + 1 < len(tokens) and tokens[i].endswith("-"):
+            result.append(tokens[i][:-1] + tokens[i + 1])
+            i += 2
+        else:
+            result.append(tokens[i])
+            i += 1
+    return result
+
+
+# Token-level rules: functions on list[str] applied after splitting.
+_TOKEN_RULES: list[tuple[str, Callable[[list[str]], list[str]]]] = [
+    ('dehyphenate', _dehyphenate),  # cross-token: ['edu-', 'cational'] -> ['educational']
 ]
 
 
 def normalize(text: str) -> list[str]:
-    """Strip markup and tokenize into whitespace-delimited word tokens (original case preserved)."""
-    for pattern, repl in _MD:
+    """Strip markup, de-hyphenate line-break splits, and tokenize (original case preserved)."""
+    for _, pattern, repl in _MARKUP_RULES:
         text = pattern.sub(repl, text)
-    return text.split()
+    tokens = text.split()
+    for _, fn in _TOKEN_RULES:
+        tokens = fn(tokens)
+    return tokens
 
 
-# Canonicalize typographic punctuation so curly/straight variants aren't counted as disagreements
-# (e.g. "Joss’s" vs "Joss's" — a glyph choice, not an OCR error).
-_PUNCT_CANON = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"', "—": "-", "–": "-", "…": "..."})
+# --- key canonicalization --------------------------------------------------------------------------
+# Applied per token to build the matching key for alignment/voting only; output text is unchanged.
+
+# Rule: typography — curly/straight variants of quotes and dashes are equivalent.
+_KEY_TYPOGRAPHY = str.maketrans({
+    '\u2018': "'",   # LEFT SINGLE QUOTATION MARK
+    '\u2019': "'",   # RIGHT SINGLE QUOTATION MARK
+    '\u201C': '"',   # LEFT DOUBLE QUOTATION MARK
+    '\u201D': '"',   # RIGHT DOUBLE QUOTATION MARK
+    '\u2014': '-',   # EM DASH
+    '\u2013': '-',   # EN DASH
+    '\u2026': '...', # HORIZONTAL ELLIPSIS
+})
 
 
 def key(token: str) -> str:
-    """Matching key for alignment/voting: typography-, case- and edge-punctuation-insensitive."""
-    return token.translate(_PUNCT_CANON).casefold().strip(".,;:!?\"'()-")
+    """Matching key for alignment/voting: typography-, case-, edge-punctuation- and hyphen-insensitive."""
+    token = token.translate(_KEY_TYPOGRAPHY)  # typography: curly quotes, dashes
+    token = token.casefold()                   # case
+    token = token.strip('.,;:!?"\'()-')  # edge punctuation
+    token = token.replace("-", "")             # hyphens: foot-steps ≡ footsteps
+    return token
 
 
 # --- alignment -------------------------------------------------------------------------------------
