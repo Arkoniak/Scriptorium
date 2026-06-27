@@ -9,9 +9,9 @@ user-invocable: true
 ## Project
 
 - Repo: `Arkoniak/Scriptorium` (remote `origin`, SSH protocol)
-- No issue tracker is in active use yet — this is a solo research project and `docs/brainstorm.md` /
-  `docs/experiments/` currently serve as the backlog/log. Don't create issues unless the user asks for
-  one explicitly; don't assume every PR needs a linked issue.
+- **GitHub issues hold the next-steps roadmap** (filed 2026-06-27, #16–#24). Run `gh issue list` to see
+  what's planned/open before deciding what to do next. Still: don't *create* new issues unless the user
+  asks; PRs don't need a linked issue (commits follow the `commits` skill, which has no `(#issue)` ref).
 - Auth: `gh auth status` to verify; already logged in as `Arkoniak` over SSH.
 
 ## Creating an issue

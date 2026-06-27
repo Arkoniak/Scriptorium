@@ -15,6 +15,24 @@ Full brief, accumulated ideas, model shortlist, and staged plan live in `docs/br
 before making architectural decisions — it records open questions and rejected ideas; don't repeat
 rejected paths (e.g. a classic-OCR-first pipeline).
 
+## Orientation — where to look to recover context (read before working)
+These are the project's durable memory; a cold start should reconstruct everything from them:
+- `docs/brainstorm.md` — the plan and **every design decision** (staged plan; consensus/ROVER; the
+  image/graphic gate; cross-page stitching; scene-break; EPUB via Pandoc; metadata). Source of truth.
+- `docs/model-comparison.md` — model capability matrix. 4 **working** models: Surya 2, Unlimited-OCR,
+  Qwen3-VL-8B, GLM-OCR (0.9B). Gemma 4 E4B **excluded**; PaddleOCR-VL **deferred**; plus a shortlist.
+- `docs/experiments/` — per-experiment findings (`README.md` is the index). What we learned and why.
+- **GitHub issues** (`gh issue list`) — the next-steps roadmap (currently #16–#24). Check before
+  asking "what's next".
+- `scripts/*.py` docstrings — how each model/tool is run (incl. transformers-version isolation via
+  `uv run --with`, and the `llama-server` requirement for Surya/Qwen).
+
+Topic → where to look:
+- Consensus / ROVER / voting / alignment → `docs/experiments/2026-06-27-consensus-rover.md` + `scripts/consensus.py`.
+- Running a model / a runtime quirk → that model's `scripts/run_*.py` docstring + `docs/model-comparison.md`.
+- Why a model is excluded/deferred (Gemma, PaddleOCR-VL) → its experiment entry.
+- Local environment (llama.cpp build, transformers 5.x isolation, Python 3.14) → memory + script docstrings.
+
 ## Skills
 - When creating a commit — invoke the `commits` skill.
 - After a meaningful experimental run (evaluating a model, comparing approaches) that reaches or
