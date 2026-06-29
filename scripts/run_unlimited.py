@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Run Baidu Unlimited-OCR on a book's page images (per-page document parsing -> Markdown).
+"""Run Baidu Unlimited-OCR on a book's page images — grounding mode by default.
 
 Reads the PNGs produced by extract_pages.py and writes a normalized run under
 books/output/<book>/runs/<run-id>/ — one manifest.json plus per-page output. This is a
 second model adapter in the Stage 1 "Bag of Experts" harness, sharing run_surya.py's output
 layout so comparison tooling targets the format, not the model. See docs/brainstorm.md (Stage 1).
 
-Unlimited-OCR is a DeepSeek-OCR successor (transformers + trust_remote_code). The default
-'document parsing.' prompt returns Markdown; a '<|grounding|>...' prompt additionally emits
-<|ref|>/<|det|> boxes (consumed by the model's own post-processing). NB: brainstorm.md claimed
-this model has no grounding — that is wrong (README-based); the remote code supports it.
+Unlimited-OCR is a DeepSeek-OCR successor (transformers + trust_remote_code).
+
+PRIMARY MODE (default): grounding — '<|grounding|>...' prompt + eval_mode=True returns raw
+<|ref|>/<|det|> tagged output, parsed into structured blocks (text + label + bbox). This gives
+layout labels (title/text/image) and pixel bboxes comparable to Surya's output, enabling
+cross-model label and bbox comparison. Raw output is kept per page as raw.txt for audit.
+Pass --no-grounding to fall back to 'document parsing.' (Markdown, no structured blocks).
+
+NB: brainstorm.md once claimed this model has no grounding — that is wrong (README-based);
+the remote code supports it and structured output is the primary mode for this project.
 """
 
 import argparse
@@ -136,7 +142,7 @@ def run_unlimited(
         MODEL_NAME,
         trust_remote_code=True,
         use_safetensors=True,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     model = model.eval().cuda()
 
@@ -145,7 +151,7 @@ def run_unlimited(
     started_at = utc_now()
     start = time.time()
 
-    for page_no, src_path in zip(page_numbers, images_paths):
+    for idx, (page_no, src_path) in enumerate(zip(page_numbers, images_paths)):
         page_out = run_pages_dir / f"page_{page_no:03d}"
         page_out.mkdir(parents=True, exist_ok=True)
 
@@ -175,7 +181,14 @@ def run_unlimited(
             text = result_md.read_text(encoding="utf-8") if result_md.exists() else ""
             blocks = []
             page_format = "markdown"
-        per_page_s[str(page_no)] = round(time.time() - page_start, 2)
+        page_elapsed = time.time() - page_start
+        per_page_s[str(page_no)] = round(page_elapsed, 2)
+
+        done = idx + 1
+        total = len(images_paths)
+        avg_s = (time.time() - start) / done
+        eta_min = (total - done) * avg_s / 60
+        print(f"  page {page_no:03d} [{done}/{total}] {page_elapsed:.1f}s — avg {avg_s:.1f}s/page — ETA ~{eta_min:.0f}min", flush=True)
 
         (run_pages_dir / f"page_{page_no:03d}.json").write_text(
             json.dumps(
@@ -233,21 +246,24 @@ def main() -> None:
     parser.add_argument("--pages", help="Optional page filter, e.g. '1,5,12' (default: all images found)")
     parser.add_argument("--label", default="default", help="Human label for this run, used in the run id")
     parser.add_argument(
-        "--grounding",
+        "--no-grounding",
         action="store_true",
-        help="Grounding mode: capture <|det|> label+bbox per block as structured blocks (text+bbox+label).",
+        dest="no_grounding",
+        help="Fall back to 'document parsing.' Markdown mode (no structured blocks). "
+             "Grounding is on by default — this flag disables it.",
     )
     parser.add_argument(
         "--prompt",
         default=None,
-        help="Override the prompt (incl. the <image> token). Defaults to the grounding prompt with "
-        "--grounding, else the document-parsing prompt.",
+        help="Override the prompt (incl. the <image> token). Defaults to the grounding prompt "
+             "unless --no-grounding is set.",
     )
     args = parser.parse_args()
 
+    grounding = not args.no_grounding
     pages_dir = args.pages_dir or (args.out_root / args.book / "pages")
     pages_filter = {int(p) for p in args.pages.split(",")} if args.pages else None
-    prompt = args.prompt or (GROUNDING_PROMPT if args.grounding else PARSING_PROMPT)
+    prompt = args.prompt or (GROUNDING_PROMPT if grounding else PARSING_PROMPT)
 
     try:
         manifest = run_unlimited(
@@ -257,7 +273,7 @@ def main() -> None:
             pages_filter=pages_filter,
             label=args.label,
             prompt=prompt,
-            grounding=args.grounding,
+            grounding=grounding,
         )
     except ValueError as error:
         parser.error(str(error))

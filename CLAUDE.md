@@ -30,8 +30,12 @@ These are the project's durable memory; a cold start should reconstruct everythi
 Topic → where to look:
 - Consensus / ROVER / voting / alignment → `docs/experiments/2026-06-27-consensus-rover.md` + `scripts/consensus.py`.
 - Running a model / a runtime quirk → that model's `scripts/run_*.py` docstring + `docs/model-comparison.md`.
+- **Which models have a capability** (emphasis, bboxes, labels, grounding, speed, etc.) → **always check `docs/model-comparison.md` first** — never answer from memory or training data.
 - Why a model is excluded/deferred (Gemma, PaddleOCR-VL) → its experiment entry.
 - Local environment (llama.cpp build, transformers 5.x isolation, Python 3.14) → memory + script docstrings.
+
+Model-specific notes:
+- **Unlimited-OCR**: always run in grounding mode (`run_unlimited.py` defaults to grounding). Grounding gives structured blocks (text + label + bbox) comparable to Surya's output. The old `--grounding` flag is gone; use `--no-grounding` only to fall back to Markdown mode.
 
 ## Skills
 - When creating a commit — invoke the `commits` skill.
