@@ -91,7 +91,10 @@ def _md_emphasis_type(marker: str) -> str | None:
 
 
 def _html_emphasis(html_text: str) -> str | None:
-    """Detect block-level emphasis type from Surya HTML (coarse: applies to the whole block)."""
+    """Detect block-level emphasis type from Surya HTML (coarse: applies to the whole block).
+
+    Kept for testing; production code uses _tokenize_html_spans for per-word precision.
+    """
     has_i = bool(re.search(r'<i[ >]', html_text, re.IGNORECASE))
     has_b = bool(re.search(r'<b[ >]', html_text, re.IGNORECASE))
     if has_i and has_b:
@@ -101,6 +104,49 @@ def _html_emphasis(html_text: str) -> str | None:
     if has_i:
         return 'italic'
     return None
+
+
+# Splits HTML on <b>/<i> open/close tags (with optional attributes), capturing delimiters.
+_HTML_SPAN_RE = re.compile(r'(</?[bi][^>]*>)', re.IGNORECASE)
+
+
+def _tokenize_html_spans(html_text: str, label: str | None) -> list[Token]:
+    """Tokenize Surya block HTML tracking per-span <b>/<i> emphasis state.
+
+    Walks through segments split on <b>/<i> open/close tags, maintaining in_b/in_i state,
+    so that each word receives only the emphasis active at its position in the HTML — not a
+    coarse block-wide flag.  Non-emphasis tags (e.g. <p>, <br>) are stripped from text segments.
+    """
+    result: list[Token] = []
+    in_b = False
+    in_i = False
+    first_token = True
+
+    for part in _HTML_SPAN_RE.split(html_text):
+        low = part.lower().strip()
+        if low in ('<b>', ) or low.startswith('<b '):
+            in_b = True
+        elif low == '</b>':
+            in_b = False
+        elif low in ('<i>',) or low.startswith('<i '):
+            in_i = True
+        elif low == '</i>':
+            in_i = False
+        else:
+            # Text segment: strip remaining tags, then tokenize
+            clean = re.sub(r'<[^>]+>', ' ', part)
+            em: str | None = None
+            if in_b and in_i:
+                em = 'bold_italic'
+            elif in_b:
+                em = 'bold'
+            elif in_i:
+                em = 'italic'
+            for word in normalize(clean):
+                result.append(Token(text=word, label=label, emphasis=em,
+                                    paragraph_start=first_token))
+                first_token = False
+    return result
 
 
 def normalize_attributed(text: str) -> list[Token]:
@@ -127,10 +173,11 @@ def normalize_blocks(blocks: list[dict]) -> list[Token]:
     """Tokenize structured blocks (Surya / Unlimited grounding), attaching label, emphasis, and
     paragraph_start.
 
-    Label from block 'label' field (PageHeader, Text, etc.). Emphasis type detected from the
-    block's 'html' field when present (Surya: <i>/<b> tags — coarse, block-level). paragraph_start
-    is True for the first token of each block. Picture/image blocks are excluded — they carry no
-    text content and belong in the EPUB as raster.
+    Label from block 'label' field (PageHeader, Text, etc.). When the block has an 'html' field
+    (Surya), emphasis is detected per-word via _tokenize_html_spans — so only the words actually
+    inside <b>/<i> spans are marked, not the whole block. Unlimited grounding blocks have no html,
+    so emphasis=None for all their tokens. paragraph_start is True for the first token of each
+    block. Picture/image blocks are excluded — they carry no text content.
     """
     result: list[Token] = []
     for block in blocks:
@@ -139,10 +186,11 @@ def normalize_blocks(blocks: list[dict]) -> list[Token]:
             continue
         html_text = block.get('html', '')
         text = block.get('text', '')
-        em = _html_emphasis(html_text) if html_text else None
-        tokens = normalize(text)
-        for j, t in enumerate(tokens):
-            result.append(Token(text=t, label=label, emphasis=em, paragraph_start=(j == 0)))
+        if html_text:
+            result.extend(_tokenize_html_spans(html_text, label))
+        else:
+            for j, t in enumerate(normalize(text)):
+                result.append(Token(text=t, label=label, paragraph_start=(j == 0)))
     return result
 
 
