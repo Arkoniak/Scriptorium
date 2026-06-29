@@ -1,5 +1,15 @@
 import pytest
-from scripts.consensus import key, normalize, consense_page
+from scripts.consensus import Token, key, normalize, normalize_attributed, normalize_blocks, consense_page
+
+
+def _page(text: str) -> dict:
+    """Minimal page dict for a text-only model (no blocks)."""
+    return {'text': text, 'blocks': [], 'format': 'markdown'}
+
+
+def _block_page(blocks: list[dict]) -> dict:
+    """Page dict for a model with structured blocks (Surya / Unlimited grounding)."""
+    return {'text': ' '.join(b.get('text', '') for b in blocks), 'blocks': blocks}
 
 
 # ---------------------------------------------------------------------------
@@ -8,40 +18,90 @@ from scripts.consensus import key, normalize, consense_page
 
 class TestNormalizeMarkup:
     def test_strips_markdown_images(self):
-        assert normalize("before ![alt](url) after") == ["before", "after"]
+        assert normalize('before ![alt](url) after') == ['before', 'after']
 
     def test_strips_markdown_links_keeps_text(self):
-        assert normalize("see [chapter](url) for details") == ["see", "chapter", "for", "details"]
+        assert normalize('see [chapter](url) for details') == ['see', 'chapter', 'for', 'details']
 
     def test_strips_html_tags(self):
-        assert normalize("<i>word</i>") == ["word"]
+        assert normalize('<i>word</i>') == ['word']
 
     def test_strips_emphasis_markers(self):
-        assert normalize("**bold** _italic_ text") == ["bold", "italic", "text"]
+        assert normalize('**bold** _italic_ text') == ['bold', 'italic', 'text']
 
     def test_strips_heading_markers(self):
-        assert normalize("# Title") == ["Title"]
+        assert normalize('# Title') == ['Title']
 
 
 class TestNormalizeDehyphenate:
     def test_merges_cross_token_line_break_split(self):
-        # "edu-\ncational" split by whitespace -> ["edu-", "cational"] -> ["educational"]
-        assert normalize("edu-\ncational") == ["educational"]
+        assert normalize('edu-\ncational') == ['educational']
 
     def test_merges_multiple_splits_in_sequence(self):
-        # "foot-\nsteps in-\nrun" -> ["footsteps", "inrun"]
-        assert normalize("foot-\nsteps in-\nrun") == ["footsteps", "inrun"]
+        assert normalize('foot-\nsteps in-\nrun') == ['footsteps', 'inrun']
 
     def test_does_not_touch_single_token_hyphen(self):
-        # "walkie-talkie" is one token, no trailing dash -> unchanged
-        assert normalize("walkie-talkie") == ["walkie-talkie"]
+        assert normalize('walkie-talkie') == ['walkie-talkie']
 
     def test_trailing_hyphen_at_end_of_stream_stays(self):
-        # no next token to merge with
-        assert normalize("self-") == ["self-"]
+        assert normalize('self-') == ['self-']
 
     def test_mixed_normal_and_split(self):
-        assert normalize("over-\ncome the self-doubt") == ["overcome", "the", "self-doubt"]
+        assert normalize('over-\ncome the self-doubt') == ['overcome', 'the', 'self-doubt']
+
+
+# ---------------------------------------------------------------------------
+# normalize_attributed()
+# ---------------------------------------------------------------------------
+
+class TestNormalizeAttributed:
+    def test_plain_text_no_emphasis(self):
+        tokens = normalize_attributed('hello world')
+        assert all(not t.emphasis for t in tokens)
+        assert [t.text for t in tokens] == ['hello', 'world']
+
+    def test_emphasis_span_marked(self):
+        tokens = normalize_attributed('say *hello* now')
+        by_text = {t.text: t.emphasis for t in tokens}
+        assert by_text['say'] is False
+        assert by_text['hello'] is True
+        assert by_text['now'] is False
+
+    def test_no_label_from_text(self):
+        tokens = normalize_attributed('*word*')
+        assert all(t.label is None for t in tokens)
+
+
+# ---------------------------------------------------------------------------
+# normalize_blocks()
+# ---------------------------------------------------------------------------
+
+class TestNormalizeBlocks:
+    def test_label_attached(self):
+        blocks = [
+            {'text': '12', 'label': 'PageHeader', 'html': '12'},
+            {'text': 'body text', 'label': 'Text', 'html': '<p>body text</p>'},
+        ]
+        tokens = normalize_blocks(blocks)
+        assert tokens[0].label == 'PageHeader'
+        assert tokens[0].text == '12'
+        assert tokens[1].label == 'Text'
+
+    def test_emphasis_from_html(self):
+        blocks = [{'text': 'word', 'label': 'Text', 'html': '<i>word</i>'}]
+        tokens = normalize_blocks(blocks)
+        assert tokens[0].emphasis is True
+
+    def test_no_emphasis_without_html(self):
+        blocks = [{'text': 'word', 'label': 'Text'}]
+        tokens = normalize_blocks(blocks)
+        assert tokens[0].emphasis is False
+
+    def test_unlimited_grounding_no_html(self):
+        blocks = [{'text': 'title here', 'label': 'title', 'bbox': [0, 0, 100, 50]}]
+        tokens = normalize_blocks(blocks)
+        assert tokens[0].label == 'title'
+        assert tokens[0].emphasis is False
 
 
 # ---------------------------------------------------------------------------
@@ -53,10 +113,10 @@ class TestKeyTypography:
         assert key('Joss’s') == key("Joss's")
 
     def test_em_dash_equals_hyphen(self):
-        assert key("well—known") == key("well-known")
+        assert key('well—known') == key('well-known')
 
     def test_en_dash_equals_hyphen(self):
-        assert key("2020–2021") == key("2020-2021")
+        assert key('2020–2021') == key('2020-2021')
 
     def test_curly_double_quotes_ignored(self):
         assert key('“hello”') == key('"hello"')
@@ -64,32 +124,30 @@ class TestKeyTypography:
 
 class TestKeyCase:
     def test_casefold(self):
-        assert key("WORD") == key("word")
-        assert key("Title") == key("title")
+        assert key('WORD') == key('word')
+        assert key('Title') == key('title')
 
 
 class TestKeyEdgePunctuation:
     def test_strips_trailing_period(self):
-        assert key("word.") == key("word")
+        assert key('word.') == key('word')
 
     def test_strips_leading_and_trailing_quotes(self):
-        assert key('"word"') == key("word")
+        assert key('"word"') == key('word')
 
     def test_strips_parentheses(self):
-        assert key("(word)") == key("word")
+        assert key('(word)') == key('word')
 
 
 class TestKeyHyphens:
     def test_single_token_hyphen_ignored(self):
-        # foot-steps and footsteps should match
-        assert key("foot-steps") == key("footsteps") == "footsteps"
+        assert key('foot-steps') == key('footsteps') == 'footsteps'
 
     def test_internal_hyphen_stripped(self):
-        assert key("in-run") == key("inrun") == "inrun"
+        assert key('in-run') == key('inrun') == 'inrun'
 
     def test_walkie_talkie_matches_dehyphenated(self):
-        # after cross-token dehyphenation, walkietalkie and walkie-talkie agree
-        assert key("walkie-talkie") == key("walkietalkie") == "walkietalkie"
+        assert key('walkie-talkie') == key('walkietalkie') == 'walkietalkie'
 
 
 # ---------------------------------------------------------------------------
@@ -98,43 +156,87 @@ class TestKeyHyphens:
 
 class TestConsensePage:
     def test_unanimous_agreement(self):
-        texts = {
-            "m1": "hello world",
-            "m2": "hello world",
-            "m3": "hello world",
+        pages = {
+            'm1': _page('hello world'),
+            'm2': _page('hello world'),
+            'm3': _page('hello world'),
         }
-        result = consense_page(texts)
-        assert result["agreement_rate"] == 1.0
-        assert result["n_disagreements"] == 0
-        assert result["consensus_text"] == "hello world"
+        result = consense_page(pages)
+        assert result['agreement_rate'] == 1.0
+        assert result['n_disagreements'] == 0
+        assert result['consensus_text'] == 'hello world'
 
     def test_hyphen_variants_count_as_agreement(self):
-        # foot-steps vs footsteps: should agree, no disagreement reported
-        texts = {
-            "m1": "foot-steps ahead",
-            "m2": "footsteps ahead",
-            "m3": "footsteps ahead",
-            "m4": "footsteps ahead",
+        pages = {
+            'm1': _page('foot-steps ahead'),
+            'm2': _page('footsteps ahead'),
+            'm3': _page('footsteps ahead'),
+            'm4': _page('footsteps ahead'),
         }
-        result = consense_page(texts)
-        assert result["n_disagreements"] == 0
-        assert result["agreement_rate"] == 1.0
+        result = consense_page(pages)
+        assert result['n_disagreements'] == 0
+        assert result['agreement_rate'] == 1.0
 
     def test_majority_vote_picks_winner(self):
-        texts = {
-            "m1": "correct word",
-            "m2": "correct word",
-            "m3": "correct word",
-            "m4": "correct wrord",  # typo
+        pages = {
+            'm1': _page('correct word'),
+            'm2': _page('correct word'),
+            'm3': _page('correct word'),
+            'm4': _page('correct wrord'),
         }
-        result = consense_page(texts)
-        assert "correct" in result["consensus_text"]
-        assert "word" in result["consensus_text"]
+        result = consense_page(pages)
+        assert 'correct' in result['consensus_text']
+        assert 'word' in result['consensus_text']
 
     def test_disagreement_reported(self):
-        texts = {
-            "m1": "alpha bravo",
-            "m2": "alpha charlie",
+        pages = {
+            'm1': _page('alpha bravo'),
+            'm2': _page('alpha charlie'),
         }
-        result = consense_page(texts)
-        assert result["n_disagreements"] >= 1
+        result = consense_page(pages)
+        assert result['n_disagreements'] >= 1
+
+    def test_header_stripped_from_body_text(self):
+        pages = {
+            'surya': _block_page([
+                {'text': '12', 'label': 'PageHeader', 'html': '12'},
+                {'text': 'hello world', 'label': 'Text', 'html': '<p>hello world</p>'},
+            ]),
+            'other': _page('12 hello world'),
+        }
+        result = consense_page(pages)
+        assert '12' in result['consensus_text']
+        assert '12' not in result['body_text']
+        assert 'hello world' in result['body_text']
+
+    def test_body_text_equals_consensus_when_no_headers(self):
+        pages = {
+            'surya': _block_page([{'text': 'hello world', 'label': 'Text', 'html': '<p>hello world</p>'}]),
+            'other': _page('hello world'),
+        }
+        result = consense_page(pages)
+        assert result['body_text'] == result['consensus_text']
+
+    def test_label_in_disagreements(self):
+        pages = {
+            'surya': _block_page([
+                {'text': '12', 'label': 'PageHeader', 'html': '12'},
+                {'text': 'body', 'label': 'Text', 'html': '<p>body</p>'},
+            ]),
+            'other': _page('body'),
+        }
+        result = consense_page(pages)
+        header_dis = [d for d in result['disagreements'] if d.get('label') == 'PageHeader']
+        assert len(header_dis) > 0
+
+    def test_emphasis_in_disagreements(self):
+        pages = {
+            'surya': _block_page([{'text': 'word', 'label': 'Text', 'html': '<i>word</i>'}]),
+            'qwen': _page('*word*'),
+        }
+        result = consense_page(pages)
+        # Both models say emphasis=True for 'word' -> agreement=1.0, emphasis voted True
+        assert result['agreement_rate'] == 1.0
+        # Even unanimous columns get emphasis info via body_text (no disagreements here,
+        # but we can check consensus_text)
+        assert 'word' in result['consensus_text']
