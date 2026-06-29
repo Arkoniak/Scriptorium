@@ -93,10 +93,13 @@ def normalize_blocks(blocks: list[dict]) -> list[Token]:
 
     Label from block 'label' field (PageHeader, Text, etc.). Emphasis detected from 'html' field
     if present (Surya: <i>/<b> tags); Unlimited grounding blocks have no html, so emphasis=False.
+    Picture/image blocks are excluded — they carry no text content and belong in the EPUB as raster.
     """
     result: list[Token] = []
     for block in blocks:
         label = block.get('label')
+        if label in _PICTURE_LABELS:
+            continue
         html = block.get('html', '')
         text = block.get('text', '')
         has_em = bool(re.search(r'<[ib][ >]', html, re.IGNORECASE)) if html else False
@@ -223,6 +226,7 @@ def _seq_for_model(page: dict) -> list[Token]:
 
 
 _HEADER_LABELS = {'PageHeader', 'PageFooter', 'page_number', 'header', 'footer'}
+_PICTURE_LABELS = {'Picture', 'image'}  # Surya: 'Picture', Unlimited-OCR grounding: 'image'
 
 
 def _drop_outlier_seqs(seqs: list[list[Token]], models: list[str]) -> tuple[list[list[Token]], list[str]]:
@@ -241,13 +245,46 @@ def _drop_outlier_seqs(seqs: list[list[Token]], models: list[str]) -> tuple[list
     return (([s for s, _ in keep], [m for _, m in keep]) if len(keep) >= 2 else (seqs, models))
 
 
-def consense_page(pages: dict[str, dict]) -> dict:
+def _page_area(page: dict) -> float:
+    """Return page area (px²) from image_bbox if available, otherwise from block extents."""
+    image_bbox = page.get('image_bbox')
+    if image_bbox:
+        x0, y0, x1, y1 = image_bbox
+        return (x1 - x0) * (y1 - y0)
+    blocks = page.get('blocks') or []
+    xs = [b['bbox'][2] for b in blocks if 'bbox' in b]
+    ys = [b['bbox'][3] for b in blocks if 'bbox' in b]
+    return float(max(xs, default=0.0)) * float(max(ys, default=0.0))
+
+
+def picture_coverage(page: dict) -> float:
+    """Fraction of page area covered by picture/image blocks (0–1)."""
+    blocks = page.get('blocks') or []
+    area = _page_area(page)
+    if not area or not blocks:
+        return 0.0
+    pic = sum(
+        (b['bbox'][2] - b['bbox'][0]) * (b['bbox'][3] - b['bbox'][1])
+        for b in blocks
+        if b.get('label') in _PICTURE_LABELS and 'bbox' in b
+    )
+    return pic / area
+
+
+def consense_page(pages: dict[str, dict], picture_threshold: float = 0.4) -> dict:
     """Align + vote one page's per-model data; return consensus text, body text, and disagreements.
 
-    'body_text' is 'consensus_text' with PageHeader/PageFooter tokens removed (postprocess).
+    'body_text' is 'consensus_text' with PageHeader/PageFooter tokens removed (postprocess), and
+    is empty for picture-dominated pages (max picture coverage >= picture_threshold across models).
     Models whose token count is >10x the median are excluded per-page (hallucination guard).
     """
     models = list(pages)
+
+    # Picture-page gate: classify before alignment; body_text is suppressed for raster pages.
+    coverages = {m: picture_coverage(pages[m]) for m in models}
+    max_coverage = max(coverages.values()) if coverages else 0.0
+    is_picture_page = max_coverage >= picture_threshold
+
     seqs = [_seq_for_model(pages[m]) for m in models]
     seqs, models = _drop_outlier_seqs(seqs, models)
     cols = align(seqs)
@@ -289,7 +326,10 @@ def consense_page(pages: dict[str, dict]) -> dict:
         'agreement_rate': round(1 - len(disagreements) / n_cols, 4),
         'content_agreement_rate': round(1 - n_content_dis / (n_content_cols or 1), 4),
         'consensus_text': ' '.join(voted),
-        'body_text': ' '.join(body_tokens),
+        'body_text': '' if is_picture_page else ' '.join(body_tokens),
+        'picture_page': is_picture_page,
+        'picture_coverage': round(max_coverage, 4),
+        'picture_coverage_per_model': {m: round(coverages[m], 4) for m in coverages},
         'disagreements': disagreements,
     }
 
@@ -318,6 +358,8 @@ def main() -> None:
     parser.add_argument('--out-root', type=Path, default=Path('books/output'), help='Artifacts root')
     parser.add_argument('--suffix', default='full', help='Run-id suffix/label to consolidate (default: full)')
     parser.add_argument('--pages', help="Optional page filter, e.g. '12,20' (default: all common pages)")
+    parser.add_argument('--picture-threshold', type=float, default=0.4,
+                        help='Picture coverage fraction (0–1) above which a page is classified as raster (default: 0.4)')
     args = parser.parse_args()
 
     runs_dir = args.out_root / args.book / 'runs'
@@ -333,13 +375,15 @@ def main() -> None:
     out_dir = runs_dir.parent / 'consensus' / f'{args.suffix}'
     (out_dir / 'pages').mkdir(parents=True, exist_ok=True)
 
-    totals_cols = totals_dis = totals_header_cols = totals_content_dis = 0
+    totals_cols = totals_dis = totals_header_cols = totals_content_dis = totals_picture = 0
     for page_no in pages:
         page_datas = {m: d for m, run in runs.items() if (d := page_data(run, page_no)) is not None}
         if len(page_datas) < 2:
             continue
-        result = consense_page(page_datas)
+        result = consense_page(page_datas, picture_threshold=args.picture_threshold)
         result['page'] = page_no
+        if result.get('picture_page'):
+            totals_picture += 1
         (out_dir / 'pages' / f'page_{page_no:03d}.json').write_text(
             json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8'
         )
@@ -356,6 +400,8 @@ def main() -> None:
         'models': list(runs),
         'runs': {m: r.name for m, r in runs.items()},
         'pages': len(pages),
+        'picture_pages': totals_picture,
+        'picture_threshold': args.picture_threshold,
         'total_columns': totals_cols,
         'total_disagreements': totals_dis,
         'overall_agreement_rate': round(1 - totals_dis / (totals_cols or 1), 4),
@@ -366,7 +412,7 @@ def main() -> None:
     }
     (out_dir / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
     print(f'Consensus written to {out_dir}')
-    print(f'  {len(pages)} pages | {totals_cols} columns | {totals_dis} disagreements '
+    print(f'  {len(pages)} pages ({totals_picture} picture) | {totals_cols} columns | {totals_dis} disagreements '
           f'| agreement {summary["overall_agreement_rate"]:.3%}'
           f' | content {summary["content_agreement_rate"]:.3%}')
 
