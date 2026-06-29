@@ -41,7 +41,7 @@ Three parallel paradigms in the industry:
 - Pipeline: VLM → Markdown/HTML → **Pandoc** → EPUB3 (headings → chapters, tables → HTML tables, formulas → MathML / rasterization as fallback).
 - Using bbox: removing running heads/page numbers by their position on the page; restoring reading order of multi-column layout; attaching caption to illustration by bbox proximity (`<figure><figcaption>`); extracting raster fragments of illustrations as EPUB resources (rather than trying to recognize a picture as text).
 - Restoring book structure: automatic EPUB TOC from H1/H2 headings; linking footnote markers to footnote text (with jump-there-and-back in the EPUB).
-- **Scene-break (in-chapter section divider) — classify by recurrence, not by OCR-ing the glyph.** Empirically (the 2026-06-25/26 runs, see `docs/experiments/`): both models see the divider ornament as a picture (Surya — a `Picture` block with empty text; Unlimited — extracts a raster `![](images/N.jpg)`), none emits a semantic break, and recognizing the glyph as text yields garbage. Detect at the **book level**: the same small centered crop recurs dozens of times → perceptual hash (dHash/aHash) + clustering; a large cluster of near-identical tiny crops = the divider (a real illustration is unique / large / often has a caption). The glyph raster itself is not needed → once classified → `<hr>`. Cover the textual variant too (`* * *` / `***` as a line). Edge case: chapter-heading ornaments also recur, but at a stable position (top of the chapter's first page) — separable by position within the cluster.
+- **Scene-break (in-chapter section divider) — gap-first, geometry-second (design 2026-06-29).** Both models see the divider ornament as a picture (Surya `Picture`, Unlimited `image`); recognising the glyph as text yields garbage. Full design and all rejected alternatives in `docs/brainstorm-scene-break.md`. Summary: (1) book-level calibration: cluster inter-paragraph gaps using IQR-based robust threshold (not max-jump, which is fooled by epigraph outliers); cluster block x-offsets to identify "paragraph blocks" vs centred decoration; (2) a gap larger than the threshold between two paragraph blocks is a scene-break zone; (3) classify what is inside the zone: nothing → blank-line break, small centred Picture → visual ornament, text with only `*/•/-` → typographic (`* * *`), title/heading block → chapter boundary; (4) cross-model comparison: Surya and Unlimited processed independently, matched by y-overlap, confidence = high if both agree. Perceptual hashing was explicitly rejected (fragile to scan-quality variation; size+recurrence is sufficient). Output: `scene_breaks.json` (consumed by `build_html.py`) + `scene_breaks_diagnostic.json` (human review). Known limitation: blank-line breaks spanning a page boundary are undetectable by this method.
 - **Tension:** per-page parsing (more reliable, but breaks paragraphs/footnotes at page boundaries) vs the whole book in one pass (as Unlimited-OCR can — the model stitches text across page breaks itself, but requires trusting reading order over hundreds of pages at once).
 - **Resolving the tension — stitching as a deterministic post-process (Path B), not trusting the model.** Order is critical: (1) **remove running heads/page numbers first** — they wedge BETWEEN the halves of a split fragment (a real example from pages 16→17: `…being weight-` → `SPACE COPS 9` → `less…`, the word "weightless" split across the boundary with the running head INSIDE); the signal already exists — Surya labels `PageHeader`/`PageFooter`. (2) Classify the boundary as a binary decision: **word split** (hyphen at end of the last line + lowercase next + dictionary check; careful with genuine compounds like `still-packed`/`up-and-up`) → join without the hyphen; **paragraph split** (no terminal punctuation `.!?"` + lowercase next) → join with a space; otherwise a new paragraph/section. Distinguish `—` (em-dash, NOT a line break) from `-` (hyphen at line end — a candidate). Unlimited's multi-page mode (single pass) as a **cross-check signal**: disagreement between its stitching and the deterministic one → flag for manual review. The brainstorm principle holds: this is **join/no-join classification at the boundary**, not "ask an LLM to merge the pages" (risk of silent rewriting). All required signals are already in the normalized run output — the stitcher is a layer on top, requiring no new model capabilities.
 - **EPUB assembly via Pandoc — concrete (design 2026-06-26).** Pandoc reads HTML directly — no need to round-trip Markdown into it. **Canonical consolidation output = HTML** (not Markdown): EPUB is XHTML internally, so HTML→EPUB is the most faithful path; HTML carries everything precisely (emphasis `<i>`/`<b>`, structure `<h1>`/`<p>`, captioned figures `<figure><img><figcaption>`, footnotes, scene-break `<hr>`), whereas Markdown needs extensions and has flavor ambiguity. We mix model formats (Surya HTML, others Markdown) → consolidation normalizes to one HTML. **Pandoc's role is the EPUB packaging** (OPF manifest, `nav.xhtml`/TOC, spine, `container.xml`, chapter splitting, image embedding) — fiddly to hand-roll. **Images:** reference by local `src` path (`<img src="images/0.jpg">`); Pandoc finds the file (`--resource-path`), embeds it into the EPUB and rewrites the link automatically — so placement-in-book is just where the tag sits in the HTML reading order (the bbox-proximity attachment from above). The **cover** (kept as raster, not OCR'd — see the image gate) goes via `--epub-cover-image=<page1>.png`, becoming the EPUB cover rather than inline content. Command sketch:
@@ -173,12 +173,24 @@ Assemble a small reference (manually verified) set of pages to compute CER/WER a
 ### Dependency graph
 
 ```
-#30 voted_tokens + build_html.py  ← root, done (PR open)
+#30 voted_tokens + build_html.py  ← root, done
  ├──→ #20 cross-page stitching       (done inside build_html.py)
  ├──→ #21 typography normalization   ┐
  ├──→ #22 scene-break → <hr>        ├──→ #23 EPUB via Pandoc  (final assembly)
  ├──→ #34 image extraction          │
  └──→ #33 page classifier ──────────┘
+
+Pipeline (assembly layer, post-consensus):
+  consensus.py  →  pages/*.json
+                    voted_tokens          (word stream, emphasis, paragraph_start)
+                    voted_blocks_surya    (Surya blocks, bbox normalised [0,1])
+                    voted_blocks_unlimited (Unlimited blocks, bbox normalised [0,1])
+                        │
+                        ├── detect_scene_breaks.py → scene_breaks.json
+                        │                          → scene_breaks_diagnostic.json
+                        │
+                        └── build_html.py (reads voted_tokens + scene_breaks.json)
+                                → book.html  →  [#23] Pandoc → EPUB
 
 Independent research / model work (no blocking dependencies):
   #19  quantify consensus gain vs best single model

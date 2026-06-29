@@ -32,7 +32,7 @@ context reset. **Update it whenever a model is evaluated or a new capability is 
 | Speed | ~6.4 s/page | ~5.2 s/page | ~8.5 s/page | **~3.9 s/page** (fastest) |
 | Output format | per-block HTML | Markdown (default) / raw grounding text | Markdown (headings, emphasis) | plain text / Markdown |
 | **Inline emphasis** | ✅ `<i>` | ❌ dropped under every prompt | ✅ `*italic*` (recall good; precision unaudited) | ❌ dropped |
-| Bounding boxes | ✅ polygon + bbox + confidence | ✅ via grounding mode (0–1000 coords) | ❌ (plain chat API) | ❌ (plain mode; JSON/grounding modes untested) |
+| Bounding boxes | ✅ polygon + bbox + confidence | ✅ via grounding mode (0–1000 coords) | ❌ (plain chat API) | ❌ (Text Recognition prompt only; grounding mode not used in pipeline) |
 | Layout labels | ✅ PageHeader/Footer/SectionHeader/Picture/Text | ✅ in grounding (title/text/image) | ➖ Markdown headings only | ➖ Markdown only |
 | Figure extraction | ❌ labels Picture, no raster | ✅ crops illustrations to image files | ❌ | ❌ |
 | Text hygiene | ✅ de-hyphenates, keeps curly quotes | ➖ keeps soft-hyphens, inconsistent quotes | ✅ curly quotes; omits running headers | ✅ de-hyphenates, curly quotes |
