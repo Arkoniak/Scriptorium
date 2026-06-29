@@ -255,11 +255,15 @@ def consense_page(pages: dict[str, dict]) -> dict:
     voted: list[str] = []
     body_tokens: list[str] = []
     disagreements: list[dict] = []
+    n_header_cols = 0
     for idx, col in enumerate(cols):
         token, agreement, tie, attrs = vote_column(col)
+        is_header = attrs.get('label') in _HEADER_LABELS
+        if is_header:
+            n_header_cols += 1
         if token is not None:
             voted.append(token)
-            if attrs.get('label') not in _HEADER_LABELS:
+            if not is_header:
                 body_tokens.append(token)
         if agreement < 1.0:
             disagreements.append({
@@ -273,11 +277,17 @@ def consense_page(pages: dict[str, dict]) -> dict:
                 'variants': {m: (col[i].text if col[i] is not None else None) for i, m in enumerate(models)},
             })
     n_cols = len(cols) or 1
+    n_content_cols = len(cols) - n_header_cols
+    n_content_dis = sum(1 for d in disagreements if d.get('label') not in _HEADER_LABELS)
     return {
         'models': models,
         'n_columns': len(cols),
+        'n_header_columns': n_header_cols,
+        'n_content_columns': n_content_cols,
         'n_disagreements': len(disagreements),
+        'n_content_disagreements': n_content_dis,
         'agreement_rate': round(1 - len(disagreements) / n_cols, 4),
+        'content_agreement_rate': round(1 - n_content_dis / (n_content_cols or 1), 4),
         'consensus_text': ' '.join(voted),
         'body_text': ' '.join(body_tokens),
         'disagreements': disagreements,
@@ -323,7 +333,7 @@ def main() -> None:
     out_dir = runs_dir.parent / 'consensus' / f'{args.suffix}'
     (out_dir / 'pages').mkdir(parents=True, exist_ok=True)
 
-    totals_cols = totals_dis = 0
+    totals_cols = totals_dis = totals_header_cols = totals_content_dis = 0
     for page_no in pages:
         page_datas = {m: d for m, run in runs.items() if (d := page_data(run, page_no)) is not None}
         if len(page_datas) < 2:
@@ -336,7 +346,10 @@ def main() -> None:
         (out_dir / 'pages' / f'page_{page_no:03d}.txt').write_text(result['body_text'] + '\n', encoding='utf-8')
         totals_cols += result['n_columns']
         totals_dis += result['n_disagreements']
+        totals_header_cols += result['n_header_columns']
+        totals_content_dis += result['n_content_disagreements']
 
+    content_cols = totals_cols - totals_header_cols
     summary = {
         'book': args.book,
         'suffix': args.suffix,
@@ -346,11 +359,16 @@ def main() -> None:
         'total_columns': totals_cols,
         'total_disagreements': totals_dis,
         'overall_agreement_rate': round(1 - totals_dis / (totals_cols or 1), 4),
+        'header_columns': totals_header_cols,
+        'content_columns': content_cols,
+        'content_disagreements': totals_content_dis,
+        'content_agreement_rate': round(1 - totals_content_dis / (content_cols or 1), 4),
     }
     (out_dir / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
     print(f'Consensus written to {out_dir}')
     print(f'  {len(pages)} pages | {totals_cols} columns | {totals_dis} disagreements '
-          f'| agreement {summary["overall_agreement_rate"]:.3%}')
+          f'| agreement {summary["overall_agreement_rate"]:.3%}'
+          f' | content {summary["content_agreement_rate"]:.3%}')
 
 
 if __name__ == '__main__':
