@@ -37,6 +37,12 @@ Topic → where to look:
 Model-specific notes:
 - **Unlimited-OCR**: always run in grounding mode (`run_unlimited.py` defaults to grounding). Grounding gives structured blocks (text + label + bbox) comparable to Surya's output. The old `--grounding` flag is gone; use `--no-grounding` only to fall back to Markdown mode.
 
+## Git discipline — MANDATORY
+- **NEVER commit, merge, or push without explicit user permission.**
+- Permission is only granted AFTER the user has reviewed the changes and said so explicitly.
+- After making code changes: run tests AND run the actual script on real book data, show the results, then WAIT.
+- "Tests pass" is not sufficient — the user must see the script work on real data and explicitly approve before any git operation.
+
 ## Skills
 - When creating a commit — invoke the `commits` skill.
 - After a meaningful experimental run (evaluating a model, comparing approaches) that reaches or

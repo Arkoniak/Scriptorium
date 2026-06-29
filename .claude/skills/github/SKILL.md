@@ -42,7 +42,7 @@ EOF
 ```
 
 - Keep the PR title under ~70 characters
-- Base branch is always `main`
+- Base branch is always `master` — **not** `main`
 - Merge strategy for this repo is **merge commit** (not squash, not rebase) — when merging via
   `gh pr merge`, use `gh pr merge --merge`, and don't override this without asking
 
@@ -62,6 +62,6 @@ gh api repos/Arkoniak/Scriptorium/pulls/<number>/comments
 
 ## Don't
 
-- Don't push to `main` directly via `gh`/`git push` without the user's go-ahead — see `git-workflow`.
+- Don't push to `master` directly via `gh`/`git push` without the user's go-ahead — see `git-workflow`.
 - Don't merge a PR without explicit confirmation, even if CI is green.
 - Don't change the merge strategy (merge commit) or repo settings without asking first.

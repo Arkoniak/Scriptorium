@@ -87,6 +87,17 @@ Key principle: cleanup is better done as **classification** (KEEP/DISCARD) rathe
 - **So gate at region + page level**, driven by the models' existing layout output (Surya `Picture`, Unlimited extracted-image bbox): a page dominated by a Picture block (cover) → raster; a small graphic region inside a text page (the title logo, an inline illustration) → raster too, stitch the surrounding text. The recurring logo is detectable by **recurrence** (same mechanism as scene-break, Layer 4).
 - **Consensus Entropy gives this for free on kept pages:** the stylized-logo line on the title page is exactly a high-disagreement region → flagged (for review, or to treat as a graphic) with no separate detector.
 
+### Page-level classification for HTML assembly (design 2026-06-29)
+- Pages fall into four classes that determine how they are rendered in the HTML and whether they stitch with neighbours:
+  - **`content`** — regular text pages; normal cross-page stitching applies.
+  - **`chapter_opener`** — first voted_token block has label `title` or `heading`; triggers a new EPUB chapter (no stitching with the preceding page).
+  - **`special_page`** — epigraph, dedication, half-title, front matter; identified by: `total_tokens < threshold` (≈30–40) AND no `title`/`heading` label AND not `picture`; rendered as `<section epub:type="epigraph">` or `<blockquote>`, no stitching with neighbours.
+  - **`picture`** — already flagged by `picture_page=True` from consensus; rendered as `<figure><img src="images/page_NNN.jpg"/></figure>`, NOT skipped.
+- Classification is heuristic (computed from `voted_tokens` + picture flag in `build_html.py`), no new model needed.
+- **Image extraction** is a required pre-step for picture pages: `extract_images.py` renders each PDF page to JPEG/PNG via PyMuPDF (or `pdftoppm`), stores in `books/output/<book>/images/page_NNN.jpg`. Pandoc picks them up via `--resource-path` and embeds them into the EPUB automatically.
+- The cover (typically first picture page) goes to `--epub-cover-image` in Pandoc instead of inline `<figure>`.
+- Page classifier is **additive**: current `build_html.py` already skips picture pages and stitches content; the classifier upgrades picture pages to embedded images and special pages to semantic wrappers. Issues #21 and #22 are unaffected.
+
 ### Methodology — run the whole book, then consolidate (decided 2026-06-26)
 - The Stage 1 9-page set was the right corpus for the *model-diagnostic* question ("which model is good") — done. **Consolidation wants the whole book.** Several designed components only work at book scale: scene-break detection by recurrence (needs many repeats to cluster), running-header detection (needs the repeating header across pages), cross-page stitching.
 - Plan: render all pages, run all models **once** over the full book (the expensive, one-time step), then iterate the consolidation layers **cheaply** on the outputs (deterministic post-processing — fast, free to re-run). High iteration speed on a large corpus surfaces inconsistencies the 9-page set hides.
@@ -156,6 +167,40 @@ Assemble a small reference (manually verified) set of pages to compute CER/WER a
 - Risk-Controlled Generative OCR (arXiv 2603.19790) — not read in detail, may provide a ready formal approach to managing generation risk, relevant for Stage 2/3.
 - The "quality metric" layer (Stage 6) — still at the idea stage (CER/WER on a manual reference + Consensus Entropy as proxy); the process of building the reference set and the decision thresholds are not worked out.
 - Runtime choice (raw Python/transformers vs vLLM vs llama.cpp) for each specific Stage 1 shortlist model is not verified in practice — the list of what actually supports what is based on docs/search, not on hands-on experience.
+
+## Issue Roadmap (as of 2026-06-29)
+
+### Dependency graph
+
+```
+#30 voted_tokens + build_html.py  ← root, done (PR open)
+ ├──→ #20 cross-page stitching       (done inside build_html.py)
+ ├──→ #21 typography normalization   ┐
+ ├──→ #22 scene-break → <hr>        ├──→ #23 EPUB via Pandoc  (final assembly)
+ ├──→ #34 image extraction          │
+ └──→ #33 page classifier ──────────┘
+
+Independent research / model work (no blocking dependencies):
+  #19  quantify consensus gain vs best single model
+  #28  docTR as 5th model / tie-breaker
+  #32  emphasis audit (Surya vs Qwen3-VL, Tesseract candidate)
+  #24  PaddleOCR-VL / FireRed OCR evaluation
+```
+
+### Execution order
+
+1. **Merge #30** — everything else depends on it.
+2. **#21 + #22 + #34 in parallel** — all independent of each other, all depend only on #30.
+3. **#33 page classifier** — small task, builds on #30 + #34; additive on top of build_html.py.
+4. **#23 EPUB assembly** — final step; needs #21 + #22 + #33 + #34.
+
+### What works without the page classifier (#33)
+
+Without it you get a **working EPUB** where:
+- Epigraph pages look like ordinary paragraphs (not `<blockquote>`)
+- Picture pages are absent (currently skipped, not embedded)
+
+With #33 + #34 you get a **complete EPUB** with proper epigraph styling and embedded illustrations.
 
 ## Session Log
 | Date | Mode | Summary |

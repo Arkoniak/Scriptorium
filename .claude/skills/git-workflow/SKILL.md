@@ -8,9 +8,9 @@ user-invocable: false
 
 ## Branch or not?
 
-This project uses a branch + PR for every substantive piece of work, even solo — it keeps `main`
+This project uses a branch + PR for every substantive piece of work, even solo — it keeps `master`
 clean and gives the `code-review`/ultrareview flow something to point at later. Exceptions where
-committing straight to `main` is fine:
+committing straight to `master` is fine:
 - A typo fix or one-line doc correction
 - Something the user explicitly says to commit directly
 
@@ -30,7 +30,7 @@ docs/stage1-model-shortlist
 
 ## Lifecycle
 
-1. Branch from current `main`: `git checkout -b <type>/<slug> main` (pull first if `main` might be
+1. Branch from current `master`: `git checkout -b <type>/<slug> master` (pull first if `master` might be
    behind `origin`).
 2. Commit per the `commits` skill conventions.
 3. Push: `git push -u origin <type>/<slug>`.
@@ -38,7 +38,7 @@ docs/stage1-model-shortlist
 5. After the PR is merged (merge commit, not squash/rebase — see `github` skill), delete the local
    and remote branch:
    ```bash
-   git checkout main && git pull
+   git checkout master && git pull
    git branch -d <type>/<slug>
    git push origin --delete <type>/<slug>
    ```
