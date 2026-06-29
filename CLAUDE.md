@@ -33,9 +33,27 @@ Topic → where to look:
 - **Which models have a capability** (emphasis, bboxes, labels, grounding, speed, etc.) → **always check `docs/model-comparison.md` first** — never answer from memory or training data.
 - Why a model is excluded/deferred (Gemma, PaddleOCR-VL) → its experiment entry.
 - Local environment (llama.cpp build, transformers 5.x isolation, Python 3.14) → memory + script docstrings.
+- **Scene-break / gap detection** (inter-block gaps, x-offset clustering, IQR threshold, voted_blocks schema) → `docs/brainstorm-scene-break.md`.
 
 Model-specific notes:
 - **Unlimited-OCR**: always run in grounding mode (`run_unlimited.py` defaults to grounding). Grounding gives structured blocks (text + label + bbox) comparable to Surya's output. The old `--grounding` flag is gone; use `--no-grounding` only to fall back to Markdown mode.
+
+## Research tasks — discuss before implement
+
+Any task with a research or design component (algorithm choice, threshold selection, data-structure
+decision, approach trade-off) requires a design discussion **before** writing code:
+
+1. Read the issue and all relevant context (brainstorm.md, experiments/, existing code).
+2. Lay out the design space: what are the options, what are the trade-offs, what data supports each.
+3. Agree on the approach with the user — fix constraints, record reasons for choices.
+4. Post a comment on the GitHub issue summarising the agreed design (inputs, algorithm, outputs,
+   open questions, rejected alternatives). This becomes the canonical record.
+5. Only then open a branch and implement.
+6. Code that encodes a non-obvious choice (threshold, heuristic, algorithm) must reference the issue
+   comment or experiment file — never leave the "why" implicit.
+
+This applies even when a solution seems obvious. The discussion step is cheap; debugging a wrong
+choice is expensive.
 
 ## Git discipline — MANDATORY
 - **NEVER commit, merge, or push without explicit user permission.**

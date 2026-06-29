@@ -28,6 +28,17 @@ fix/grounding-empty-bbox
 docs/stage1-model-shortlist
 ```
 
+## Research tasks — discuss first
+
+If the task has any research or design component (algorithm choice, threshold, data-structure
+trade-off), **do not open a branch yet**. First:
+1. Read the issue and all relevant context.
+2. Discuss design options and trade-offs with the user.
+3. Post the agreed design as a comment on the GitHub issue.
+4. Only then branch and implement.
+
+See CLAUDE.md §"Research tasks" for the full rule.
+
 ## Lifecycle
 
 1. Branch from current `master`: `git checkout -b <type>/<slug> master` (pull first if `master` might be
