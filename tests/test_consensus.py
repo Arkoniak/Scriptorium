@@ -1,5 +1,5 @@
 import pytest
-from scripts.consensus import Token, key, normalize, normalize_attributed, normalize_blocks, consense_page, picture_coverage
+from scripts.consensus import Token, key, normalize, normalize_attributed, normalize_blocks, consense_page, picture_coverage, _html_emphasis
 
 
 def _page(text: str) -> dict:
@@ -10,6 +10,31 @@ def _page(text: str) -> dict:
 def _block_page(blocks: list[dict]) -> dict:
     """Page dict for a model with structured blocks (Surya / Unlimited grounding)."""
     return {'text': ' '.join(b.get('text', '') for b in blocks), 'blocks': blocks}
+
+
+# ---------------------------------------------------------------------------
+# _html_emphasis()
+# ---------------------------------------------------------------------------
+
+class TestHtmlEmphasis:
+    def test_italic(self):
+        assert _html_emphasis('<i>word</i>') == 'italic'
+
+    def test_bold(self):
+        assert _html_emphasis('<b>word</b>') == 'bold'
+
+    def test_bold_italic(self):
+        assert _html_emphasis('<b><i>word</i></b>') == 'bold_italic'
+
+    def test_no_emphasis(self):
+        assert _html_emphasis('<p>plain text</p>') is None
+
+    def test_empty_string(self):
+        assert _html_emphasis('') is None
+
+    def test_case_insensitive(self):
+        assert _html_emphasis('<I>word</I>') == 'italic'
+        assert _html_emphasis('<B>word</B>') == 'bold'
 
 
 # ---------------------------------------------------------------------------
@@ -57,19 +82,33 @@ class TestNormalizeDehyphenate:
 class TestNormalizeAttributed:
     def test_plain_text_no_emphasis(self):
         tokens = normalize_attributed('hello world')
-        assert all(not t.emphasis for t in tokens)
+        assert all(t.emphasis is None for t in tokens)
         assert [t.text for t in tokens] == ['hello', 'world']
 
-    def test_emphasis_span_marked(self):
+    def test_italic_span(self):
         tokens = normalize_attributed('say *hello* now')
         by_text = {t.text: t.emphasis for t in tokens}
-        assert by_text['say'] is False
-        assert by_text['hello'] is True
-        assert by_text['now'] is False
+        assert by_text['say'] is None
+        assert by_text['hello'] == 'italic'
+        assert by_text['now'] is None
+
+    def test_bold_span(self):
+        tokens = normalize_attributed('say **hello** now')
+        by_text = {t.text: t.emphasis for t in tokens}
+        assert by_text['hello'] == 'bold'
+
+    def test_bold_italic_span(self):
+        tokens = normalize_attributed('say ***hello*** now')
+        by_text = {t.text: t.emphasis for t in tokens}
+        assert by_text['hello'] == 'bold_italic'
 
     def test_no_label_from_text(self):
         tokens = normalize_attributed('*word*')
         assert all(t.label is None for t in tokens)
+
+    def test_no_paragraph_start_from_text(self):
+        tokens = normalize_attributed('*word* plain')
+        assert all(not t.paragraph_start for t in tokens)
 
 
 # ---------------------------------------------------------------------------
@@ -87,21 +126,47 @@ class TestNormalizeBlocks:
         assert tokens[0].text == '12'
         assert tokens[1].label == 'Text'
 
-    def test_emphasis_from_html(self):
+    def test_italic_from_html(self):
         blocks = [{'text': 'word', 'label': 'Text', 'html': '<i>word</i>'}]
         tokens = normalize_blocks(blocks)
-        assert tokens[0].emphasis is True
+        assert tokens[0].emphasis == 'italic'
+
+    def test_bold_from_html(self):
+        blocks = [{'text': 'word', 'label': 'Text', 'html': '<b>word</b>'}]
+        tokens = normalize_blocks(blocks)
+        assert tokens[0].emphasis == 'bold'
+
+    def test_bold_italic_from_html(self):
+        blocks = [{'text': 'word', 'label': 'Text', 'html': '<b><i>word</i></b>'}]
+        tokens = normalize_blocks(blocks)
+        assert tokens[0].emphasis == 'bold_italic'
 
     def test_no_emphasis_without_html(self):
         blocks = [{'text': 'word', 'label': 'Text'}]
         tokens = normalize_blocks(blocks)
-        assert tokens[0].emphasis is False
+        assert tokens[0].emphasis is None
 
     def test_unlimited_grounding_no_html(self):
         blocks = [{'text': 'title here', 'label': 'title', 'bbox': [0, 0, 100, 50]}]
         tokens = normalize_blocks(blocks)
         assert tokens[0].label == 'title'
-        assert tokens[0].emphasis is False
+        assert tokens[0].emphasis is None
+
+    def test_paragraph_start_first_token_of_each_block(self):
+        blocks = [
+            {'text': 'one two', 'label': 'Text', 'html': ''},
+            {'text': 'three four', 'label': 'Text', 'html': ''},
+        ]
+        tokens = normalize_blocks(blocks)
+        assert tokens[0].paragraph_start is True   # 'one' — first in block 0
+        assert tokens[1].paragraph_start is False  # 'two'
+        assert tokens[2].paragraph_start is True   # 'three' — first in block 1
+        assert tokens[3].paragraph_start is False  # 'four'
+
+    def test_paragraph_start_single_token_block(self):
+        blocks = [{'text': 'alone', 'label': 'Text', 'html': ''}]
+        tokens = normalize_blocks(blocks)
+        assert tokens[0].paragraph_start is True
 
 
 # ---------------------------------------------------------------------------
@@ -235,11 +300,86 @@ class TestConsensePage:
             'qwen': _page('*word*'),
         }
         result = consense_page(pages)
-        # Both models say emphasis=True for 'word' -> agreement=1.0, emphasis voted True
+        # Both models agree on 'word' → text agreement=1.0
         assert result['agreement_rate'] == 1.0
-        # Even unanimous columns get emphasis info via body_text (no disagreements here,
-        # but we can check consensus_text)
         assert 'word' in result['consensus_text']
+
+    def test_voted_tokens_present(self):
+        pages = {
+            'surya': _block_page([{'text': 'hello world', 'label': 'Text', 'html': '<p>hello world</p>'}]),
+            'other': _page('hello world'),
+        }
+        result = consense_page(pages)
+        assert 'voted_tokens' in result
+        assert len(result['voted_tokens']) == 2
+        assert result['voted_tokens'][0]['text'] == 'hello'
+        assert result['voted_tokens'][1]['text'] == 'world'
+
+    def test_voted_tokens_has_required_fields(self):
+        pages = {
+            'surya': _block_page([{'text': 'word', 'label': 'Text', 'html': '<i>word</i>'}]),
+            'other': _page('word'),
+        }
+        result = consense_page(pages)
+        token = result['voted_tokens'][0]
+        assert 'text' in token
+        assert 'label' in token
+        assert 'emphasis' in token
+        assert 'paragraph_start' in token
+
+    def test_voted_tokens_emphasis_typed(self):
+        pages = {
+            'surya': _block_page([{'text': 'word', 'label': 'Text', 'html': '<i>word</i>'}]),
+            'qwen': _page('*word*'),
+        }
+        result = consense_page(pages)
+        assert result['voted_tokens'][0]['emphasis'] == 'italic'
+
+    def test_voted_tokens_excludes_headers(self):
+        pages = {
+            'surya': _block_page([
+                {'text': '12', 'label': 'PageHeader', 'html': '12'},
+                {'text': 'body', 'label': 'Text', 'html': '<p>body</p>'},
+            ]),
+            'other': _page('12 body'),
+        }
+        result = consense_page(pages)
+        texts = [t['text'] for t in result['voted_tokens']]
+        assert '12' not in texts
+        assert 'body' in texts
+
+    def test_voted_tokens_empty_on_picture_page(self):
+        pages = {
+            'surya': {
+                'image_bbox': [0, 0, 100, 100],
+                'blocks': [_picture_block(0, 0, 100, 80)],
+                'text': '',
+            },
+            'other': _page('cover text'),
+        }
+        result = consense_page(pages, picture_threshold=0.4)
+        assert result['voted_tokens'] == []
+
+    def test_voted_tokens_paragraph_start(self):
+        pages = {
+            'surya': _block_page([
+                {'text': 'first block', 'label': 'Text', 'html': ''},
+                {'text': 'second block', 'label': 'Text', 'html': ''},
+            ]),
+            'unlimited': _block_page([
+                {'text': 'first block', 'label': 'text', 'html': ''},
+                {'text': 'second block', 'label': 'text', 'html': ''},
+            ]),
+        }
+        result = consense_page(pages)
+        tokens = result['voted_tokens']
+        # 'first' is the first token of block 0 → paragraph_start=True
+        first_tokens = [t for t in tokens if t['text'] == 'first']
+        assert first_tokens[0]['paragraph_start'] is True
+        # 'block' (end of block 0) → paragraph_start=False
+        # 'second' is first token of block 1 → paragraph_start=True
+        second_tokens = [t for t in tokens if t['text'] == 'second']
+        assert second_tokens[0]['paragraph_start'] is True
 
 
 # ---------------------------------------------------------------------------

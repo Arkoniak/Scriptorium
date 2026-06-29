@@ -4,12 +4,15 @@
 Deterministic, no LLM. For each page it gathers the text from every model's run, normalizes to a
 flat word stream, aligns the streams into columns (progressive multiple alignment with gap/NULL
 insertion — so a single deletion in one model becomes one gap column, not a frame shift), then per
-column votes (ROVER) and measures agreement. Token attributes (layout label, emphasis) are voted
-separately, considering only models that provide them. Output: a voted consensus text per page plus
-a report of exactly where the models disagree (the localized signal).
+column votes (ROVER) and measures agreement. Token attributes (layout label, emphasis,
+paragraph_start) are voted separately, considering only models that provide them:
+  - label, paragraph_start: block-capable models only (Surya, Unlimited grounding)
+  - emphasis type: emphasis-capable models only (Surya <i>/<b>, Qwen3-VL *…*/**…**)
+Output: a voted consensus text per page, a voted_tokens list (per-token label/emphasis/
+paragraph_start for HTML assembly), and a disagreement report.
 
 Reads the latest *__<suffix> run per model under books/output/<book>/runs/. See docs/brainstorm.md
-(Consolidation / consensus).
+(Consolidation / consensus) and issue #30.
 """
 
 import argparse
@@ -27,8 +30,9 @@ from typing import NamedTuple
 
 class Token(NamedTuple):
     text: str
-    label: str | None = None    # layout label (PageHeader/Footer/Text/...) from block structure
-    emphasis: bool = False       # italic/bold: Surya <i>/<b> HTML, Qwen3-VL *...* Markdown
+    label: str | None = None            # layout label (PageHeader/Footer/Text/...) from block structure
+    emphasis: str | None = None         # 'italic' | 'bold' | 'bold_italic' | None
+    paragraph_start: bool = False       # True for the first token of a new block
 
 
 # --- normalization ---------------------------------------------------------------------------------
@@ -72,39 +76,121 @@ def normalize(text: str) -> list[str]:
     return tokens
 
 
-# Splits Markdown emphasis spans (*...* or **...**) from plain text.
-# re.split with a capture group alternates: [plain0, em1, plain2, em3, ...]
-_EMPHASIS_RE = re.compile(r'\*+(.+?)\*+', re.DOTALL)
+# Matches Markdown emphasis: group 1 = marker (*/**/***)  group 2 = content.
+# Backreference \1 requires balanced closing markers.
+_MD_EMPHASIS_RE = re.compile(r'(\*{1,3})(.+?)\1', re.DOTALL)
+
+
+def _md_emphasis_type(marker: str) -> str | None:
+    n = len(marker)
+    if n >= 3:
+        return 'bold_italic'
+    if n == 2:
+        return 'bold'
+    return 'italic'
+
+
+def _html_emphasis(html_text: str) -> str | None:
+    """Detect block-level emphasis type from Surya HTML (coarse: applies to the whole block).
+
+    Kept for testing; production code uses _tokenize_html_spans for per-word precision.
+    """
+    has_i = bool(re.search(r'<i[ >]', html_text, re.IGNORECASE))
+    has_b = bool(re.search(r'<b[ >]', html_text, re.IGNORECASE))
+    if has_i and has_b:
+        return 'bold_italic'
+    if has_b:
+        return 'bold'
+    if has_i:
+        return 'italic'
+    return None
+
+
+# Splits HTML on <b>/<i> open/close tags (with optional attributes), capturing delimiters.
+_HTML_SPAN_RE = re.compile(r'(</?[bi][^>]*>)', re.IGNORECASE)
+
+
+def _tokenize_html_spans(html_text: str, label: str | None) -> list[Token]:
+    """Tokenize Surya block HTML tracking per-span <b>/<i> emphasis state.
+
+    Walks through segments split on <b>/<i> open/close tags, maintaining in_b/in_i state,
+    so that each word receives only the emphasis active at its position in the HTML — not a
+    coarse block-wide flag.  Non-emphasis tags (e.g. <p>, <br>) are stripped from text segments.
+    """
+    result: list[Token] = []
+    in_b = False
+    in_i = False
+    first_token = True
+
+    for part in _HTML_SPAN_RE.split(html_text):
+        low = part.lower().strip()
+        if low in ('<b>', ) or low.startswith('<b '):
+            in_b = True
+        elif low == '</b>':
+            in_b = False
+        elif low in ('<i>',) or low.startswith('<i '):
+            in_i = True
+        elif low == '</i>':
+            in_i = False
+        else:
+            # Text segment: strip remaining tags, then tokenize
+            clean = re.sub(r'<[^>]+>', ' ', part)
+            em: str | None = None
+            if in_b and in_i:
+                em = 'bold_italic'
+            elif in_b:
+                em = 'bold'
+            elif in_i:
+                em = 'italic'
+            for word in normalize(clean):
+                result.append(Token(text=word, label=label, emphasis=em,
+                                    paragraph_start=first_token))
+                first_token = False
+    return result
 
 
 def normalize_attributed(text: str) -> list[Token]:
-    """Tokenize text, detecting *emphasis* spans. No layout label (text-only models)."""
+    """Tokenize text, detecting *italic* / **bold** / ***bold_italic*** spans.
+
+    No layout label or paragraph_start — text-only models (Qwen3-VL, GLM-OCR) contribute only
+    to text and emphasis voting, not to structural/paragraph voting.
+    """
     result: list[Token] = []
-    parts = _EMPHASIS_RE.split(text)
-    for i, part in enumerate(parts):
-        is_em = (i % 2 == 1)
-        for t in normalize(part):
-            result.append(Token(text=t, emphasis=is_em))
+    last = 0
+    for m in _MD_EMPHASIS_RE.finditer(text):
+        for t in normalize(text[last:m.start()]):
+            result.append(Token(text=t))
+        em = _md_emphasis_type(m.group(1))
+        for t in normalize(m.group(2)):
+            result.append(Token(text=t, emphasis=em))
+        last = m.end()
+    for t in normalize(text[last:]):
+        result.append(Token(text=t))
     return result
 
 
 def normalize_blocks(blocks: list[dict]) -> list[Token]:
-    """Tokenize structured blocks (Surya / Unlimited grounding), attaching label and emphasis.
+    """Tokenize structured blocks (Surya / Unlimited grounding), attaching label, emphasis, and
+    paragraph_start.
 
-    Label from block 'label' field (PageHeader, Text, etc.). Emphasis detected from 'html' field
-    if present (Surya: <i>/<b> tags); Unlimited grounding blocks have no html, so emphasis=False.
-    Picture/image blocks are excluded — they carry no text content and belong in the EPUB as raster.
+    Label from block 'label' field (PageHeader, Text, etc.). When the block has an 'html' field
+    (Surya), emphasis is detected per-word via _tokenize_html_spans — so only the words actually
+    inside <b>/<i> spans are marked, not the whole block. Unlimited grounding blocks have no html,
+    so emphasis=None for all their tokens. paragraph_start is True for the first token of each
+    block. Picture/image blocks are excluded — they carry no text content.
     """
     result: list[Token] = []
     for block in blocks:
         label = block.get('label')
         if label in _PICTURE_LABELS:
             continue
-        html = block.get('html', '')
+        html_text = block.get('html', '')
         text = block.get('text', '')
-        has_em = bool(re.search(r'<[ib][ >]', html, re.IGNORECASE)) if html else False
-        for t in normalize(text):
-            result.append(Token(text=t, label=label, emphasis=has_em))
+        if html_text:
+            result.extend(_tokenize_html_spans(html_text, label))
+        else:
+            for j, t in enumerate(normalize(text)):
+                result.append(Token(text=t, label=label, paragraph_start=(j == 0)))
     return result
 
 
@@ -187,8 +273,8 @@ def vote_column(col: list[Token | None]) -> tuple[str | None, float, bool, dict]
     """ROVER vote on one aligned column, including attribute voting.
 
     Returns (winning token text or None=delete, agreement in [0,1], tie?, attrs dict).
-    Label is voted among tokens that carry one (models with block structure).
-    Emphasis is majority-voted among all non-gap tokens.
+    Label and paragraph_start: voted among block-capable models (those with label != None).
+    Emphasis type: voted among emphasis-capable models (those with emphasis != None).
     """
     n = len(col)
     counts = Counter(key(t.text) if t is not None else None for t in col)
@@ -196,13 +282,19 @@ def vote_column(col: list[Token | None]) -> tuple[str | None, float, bool, dict]
     tie = bool(rest) and rest[0][1] == top_n
     agreement = top_n / n
 
+    # Label: block-capable models only
     labels = [t.label for t in col if t is not None and t.label is not None]
     label_vote = Counter(labels).most_common(1)[0][0] if labels else None
 
-    em_votes = [t.emphasis for t in col if t is not None]
-    emphasis_vote = (sum(em_votes) > len(em_votes) / 2) if em_votes else False
+    # Emphasis type: emphasis-capable models only (non-None votes)
+    em_values = [t.emphasis for t in col if t is not None and t.emphasis is not None]
+    emphasis_vote = Counter(em_values).most_common(1)[0][0] if em_values else None
 
-    attrs = {'label': label_vote, 'emphasis': emphasis_vote}
+    # paragraph_start: block-capable models only (those providing a label)
+    para_votes = [t.paragraph_start for t in col if t is not None and t.label is not None]
+    paragraph_start_vote = bool(sum(para_votes) > len(para_votes) / 2) if para_votes else False
+
+    attrs = {'label': label_vote, 'emphasis': emphasis_vote, 'paragraph_start': paragraph_start_vote}
 
     if top_key is None:
         return None, agreement, tie, attrs
@@ -291,6 +383,7 @@ def consense_page(pages: dict[str, dict], picture_threshold: float = 0.4) -> dic
 
     voted: list[str] = []
     body_tokens: list[str] = []
+    voted_tokens: list[dict] = []
     disagreements: list[dict] = []
     n_header_cols = 0
     for idx, col in enumerate(cols):
@@ -302,6 +395,13 @@ def consense_page(pages: dict[str, dict], picture_threshold: float = 0.4) -> dic
             voted.append(token)
             if not is_header:
                 body_tokens.append(token)
+                if not is_picture_page:
+                    voted_tokens.append({
+                        'text': token,
+                        'label': attrs.get('label'),
+                        'emphasis': attrs.get('emphasis'),
+                        'paragraph_start': attrs.get('paragraph_start', False),
+                    })
         if agreement < 1.0:
             disagreements.append({
                 'col': idx,
@@ -327,6 +427,7 @@ def consense_page(pages: dict[str, dict], picture_threshold: float = 0.4) -> dic
         'content_agreement_rate': round(1 - n_content_dis / (n_content_cols or 1), 4),
         'consensus_text': ' '.join(voted),
         'body_text': '' if is_picture_page else ' '.join(body_tokens),
+        'voted_tokens': voted_tokens,
         'picture_page': is_picture_page,
         'picture_coverage': round(max_coverage, 4),
         'picture_coverage_per_model': {m: round(coverages[m], 4) for m in coverages},
