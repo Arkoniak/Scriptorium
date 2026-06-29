@@ -1,5 +1,5 @@
 import pytest
-from scripts.consensus import Token, key, normalize, normalize_attributed, normalize_blocks, consense_page
+from scripts.consensus import Token, key, normalize, normalize_attributed, normalize_blocks, consense_page, picture_coverage
 
 
 def _page(text: str) -> dict:
@@ -240,3 +240,124 @@ class TestConsensePage:
         # Even unanimous columns get emphasis info via body_text (no disagreements here,
         # but we can check consensus_text)
         assert 'word' in result['consensus_text']
+
+
+# ---------------------------------------------------------------------------
+# picture_coverage() + image/graphic gate
+# ---------------------------------------------------------------------------
+
+def _picture_block(x0, y0, x1, y1, label='Picture'):
+    return {'label': label, 'text': '', 'bbox': [x0, y0, x1, y1]}
+
+
+def _text_block(text, x0, y0, x1, y1, label='Text'):
+    return {'label': label, 'text': text, 'bbox': [x0, y0, x1, y1]}
+
+
+class TestPictureCoverage:
+    def test_no_blocks_zero(self):
+        assert picture_coverage({'blocks': []}) == 0.0
+
+    def test_full_page_picture_surya(self):
+        # Surya provides image_bbox for page dimensions
+        page = {
+            'image_bbox': [0, 0, 100, 200],
+            'blocks': [_picture_block(0, 0, 100, 200)],
+        }
+        assert picture_coverage(page) == pytest.approx(1.0)
+
+    def test_half_page_picture(self):
+        page = {
+            'image_bbox': [0, 0, 100, 200],
+            'blocks': [_picture_block(0, 100, 100, 200)],
+        }
+        assert picture_coverage(page) == pytest.approx(0.5)
+
+    def test_unlimited_label_image(self):
+        # Unlimited-OCR uses 'image' label; page area inferred from block extents
+        page = {
+            'blocks': [
+                _text_block('hello', 0, 0, 100, 50, label='text'),
+                _picture_block(0, 50, 100, 100, label='image'),
+            ]
+        }
+        # page area = 100 * 100 = 10000; picture = 100 * 50 = 5000
+        assert picture_coverage(page) == pytest.approx(0.5)
+
+    def test_text_only_page_zero(self):
+        page = {
+            'image_bbox': [0, 0, 100, 200],
+            'blocks': [_text_block('hello world', 10, 10, 90, 50, label='Text')],
+        }
+        assert picture_coverage(page) == 0.0
+
+
+class TestConsensePagePictureGate:
+    def test_picture_page_flag_set(self):
+        # Page where one model reports >40% picture coverage
+        pages = {
+            'surya': {
+                'image_bbox': [0, 0, 100, 100],
+                'blocks': [_picture_block(0, 0, 100, 60)],  # 60% coverage
+                'text': '',
+            },
+            'other': _page('some text'),
+        }
+        result = consense_page(pages, picture_threshold=0.4)
+        assert result['picture_page'] is True
+        assert result['picture_coverage'] == pytest.approx(0.6)
+
+    def test_picture_page_body_text_empty(self):
+        pages = {
+            'surya': {
+                'image_bbox': [0, 0, 100, 100],
+                'blocks': [_picture_block(0, 0, 100, 80)],
+                'text': '',
+            },
+            'other': _page('cover text'),
+        }
+        result = consense_page(pages, picture_threshold=0.4)
+        assert result['picture_page'] is True
+        assert result['body_text'] == ''
+
+    def test_text_page_not_flagged(self):
+        pages = {
+            'surya': {
+                'image_bbox': [0, 0, 100, 100],
+                'blocks': [
+                    _picture_block(0, 90, 100, 100),  # 10% coverage
+                    _text_block('body', 0, 0, 100, 90, label='Text'),
+                ],
+                'text': 'body',
+            },
+            'other': _page('body'),
+        }
+        result = consense_page(pages, picture_threshold=0.4)
+        assert result['picture_page'] is False
+        assert 'body' in result['body_text']
+
+    def test_picture_blocks_excluded_from_tokens(self):
+        blocks = [
+            _picture_block(0, 0, 50, 50),
+            _text_block('real text', 0, 50, 100, 100, label='Text'),
+        ]
+        tokens = normalize_blocks(blocks)
+        texts = [t.text for t in tokens]
+        assert 'real' in texts
+        assert 'text' in texts
+        # picture block had no text to begin with, but label is excluded
+        assert all(t.label != 'Picture' for t in tokens)
+
+    def test_picture_coverage_per_model_in_result(self):
+        pages = {
+            'surya': {
+                'image_bbox': [0, 0, 100, 100],
+                'blocks': [_picture_block(0, 0, 100, 50)],
+                'text': '',
+            },
+            'other': _page('text'),
+        }
+        result = consense_page(pages)
+        assert 'picture_coverage_per_model' in result
+        assert 'surya' in result['picture_coverage_per_model']
+        assert result['picture_coverage_per_model']['surya'] == pytest.approx(0.5)
