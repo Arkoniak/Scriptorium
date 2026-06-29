@@ -297,7 +297,7 @@ class TestConsensePage:
     def test_emphasis_in_disagreements(self):
         pages = {
             'surya': _block_page([{'text': 'word', 'label': 'Text', 'html': '<i>word</i>'}]),
-            'qwen': _page('*word*'),
+            'qwen3-vl-8b': _page('*word*'),
         }
         result = consense_page(pages)
         # Both models agree on 'word' → text agreement=1.0
@@ -330,7 +330,34 @@ class TestConsensePage:
     def test_voted_tokens_emphasis_typed(self):
         pages = {
             'surya': _block_page([{'text': 'word', 'label': 'Text', 'html': '<i>word</i>'}]),
-            'qwen': _page('*word*'),
+            'qwen3-vl-8b': _page('*word*'),
+        }
+        result = consense_page(pages)
+        assert result['voted_tokens'][0]['emphasis'] == 'italic'
+
+    def test_qwen_none_defeats_surya_false_bold(self):
+        """Qwen3-VL 'no emphasis' wins over Surya's false bold (e.g. ALL CAPS → <b>)."""
+        pages = {
+            'surya': _block_page([{'text': 'CAPS', 'label': 'Text', 'html': '<b>CAPS</b>'}]),
+            'qwen3-vl-8b': _page('CAPS'),
+        }
+        result = consense_page(pages)
+        assert result['voted_tokens'][0]['emphasis'] is None
+
+    def test_qwen_italic_wins_surya_none(self):
+        """Qwen3-VL italic detection wins when Surya produces no emphasis."""
+        pages = {
+            'surya': _block_page([{'text': 'word', 'label': 'Text', 'html': '<p>word</p>'}]),
+            'qwen3-vl-8b': _page('*word*'),
+        }
+        result = consense_page(pages)
+        assert result['voted_tokens'][0]['emphasis'] == 'italic'
+
+    def test_glm_does_not_participate_in_emphasis_voting(self):
+        """GLM-OCR (priority 0) does not affect emphasis voting."""
+        pages = {
+            'surya': _block_page([{'text': 'word', 'label': 'Text', 'html': '<i>word</i>'}]),
+            'glm-ocr': _page('word'),
         }
         result = consense_page(pages)
         assert result['voted_tokens'][0]['emphasis'] == 'italic'

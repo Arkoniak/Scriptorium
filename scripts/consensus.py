@@ -7,7 +7,9 @@ insertion — so a single deletion in one model becomes one gap column, not a fr
 column votes (ROVER) and measures agreement. Token attributes (layout label, emphasis,
 paragraph_start) are voted separately, considering only models that provide them:
   - label, paragraph_start: block-capable models only (Surya, Unlimited grounding)
-  - emphasis type: emphasis-capable models only (Surya <i>/<b>, Qwen3-VL *…*/**…**)
+  - emphasis type: emphasis-capable models only (Surya priority=1, Qwen3-VL priority=2); their
+    None counts as "no emphasis" — not abstention; on tie the highest-priority model wins, so
+    Qwen3-VL's conservative detection defeats Surya's ALL-CAPS false-bold
 Output: a voted consensus text per page, a voted_tokens list (per-token label/emphasis/
 paragraph_start for HTML assembly), and a disagreement report.
 
@@ -33,6 +35,7 @@ class Token(NamedTuple):
     label: str | None = None            # layout label (PageHeader/Footer/Text/...) from block structure
     emphasis: str | None = None         # 'italic' | 'bold' | 'bold_italic' | None
     paragraph_start: bool = False       # True for the first token of a new block
+    emphasis_priority: int = 0          # 0=not emphasis-capable; higher wins ties (qwen3-vl-8b=2, surya=1)
 
 
 # --- normalization ---------------------------------------------------------------------------------
@@ -110,7 +113,7 @@ def _html_emphasis(html_text: str) -> str | None:
 _HTML_SPAN_RE = re.compile(r'(</?[bi][^>]*>)', re.IGNORECASE)
 
 
-def _tokenize_html_spans(html_text: str, label: str | None) -> list[Token]:
+def _tokenize_html_spans(html_text: str, label: str | None, emphasis_priority: int = 0) -> list[Token]:
     """Tokenize Surya block HTML tracking per-span <b>/<i> emphasis state.
 
     Walks through segments split on <b>/<i> open/close tags, maintaining in_b/in_i state,
@@ -144,32 +147,33 @@ def _tokenize_html_spans(html_text: str, label: str | None) -> list[Token]:
                 em = 'italic'
             for word in normalize(clean):
                 result.append(Token(text=word, label=label, emphasis=em,
-                                    paragraph_start=first_token))
+                                    paragraph_start=first_token, emphasis_priority=emphasis_priority))
                 first_token = False
     return result
 
 
-def normalize_attributed(text: str) -> list[Token]:
+def normalize_attributed(text: str, emphasis_priority: int = 0) -> list[Token]:
     """Tokenize text, detecting *italic* / **bold** / ***bold_italic*** spans.
 
     No layout label or paragraph_start — text-only models (Qwen3-VL, GLM-OCR) contribute only
     to text and emphasis voting, not to structural/paragraph voting.
+    emphasis_priority > 0 marks this model as emphasis-capable (its None = "no emphasis", not abstention).
     """
     result: list[Token] = []
     last = 0
     for m in _MD_EMPHASIS_RE.finditer(text):
         for t in normalize(text[last:m.start()]):
-            result.append(Token(text=t))
+            result.append(Token(text=t, emphasis_priority=emphasis_priority))
         em = _md_emphasis_type(m.group(1))
         for t in normalize(m.group(2)):
-            result.append(Token(text=t, emphasis=em))
+            result.append(Token(text=t, emphasis=em, emphasis_priority=emphasis_priority))
         last = m.end()
     for t in normalize(text[last:]):
-        result.append(Token(text=t))
+        result.append(Token(text=t, emphasis_priority=emphasis_priority))
     return result
 
 
-def normalize_blocks(blocks: list[dict]) -> list[Token]:
+def normalize_blocks(blocks: list[dict], emphasis_priority: int = 0) -> list[Token]:
     """Tokenize structured blocks (Surya / Unlimited grounding), attaching label, emphasis, and
     paragraph_start.
 
@@ -178,6 +182,7 @@ def normalize_blocks(blocks: list[dict]) -> list[Token]:
     inside <b>/<i> spans are marked, not the whole block. Unlimited grounding blocks have no html,
     so emphasis=None for all their tokens. paragraph_start is True for the first token of each
     block. Picture/image blocks are excluded — they carry no text content.
+    emphasis_priority > 0 marks this model as emphasis-capable (Surya=1).
     """
     result: list[Token] = []
     for block in blocks:
@@ -187,10 +192,11 @@ def normalize_blocks(blocks: list[dict]) -> list[Token]:
         html_text = block.get('html', '')
         text = block.get('text', '')
         if html_text:
-            result.extend(_tokenize_html_spans(html_text, label))
+            result.extend(_tokenize_html_spans(html_text, label, emphasis_priority=emphasis_priority))
         else:
             for j, t in enumerate(normalize(text)):
-                result.append(Token(text=t, label=label, paragraph_start=(j == 0)))
+                result.append(Token(text=t, label=label, paragraph_start=(j == 0),
+                                    emphasis_priority=emphasis_priority))
     return result
 
 
@@ -274,7 +280,8 @@ def vote_column(col: list[Token | None]) -> tuple[str | None, float, bool, dict]
 
     Returns (winning token text or None=delete, agreement in [0,1], tie?, attrs dict).
     Label and paragraph_start: voted among block-capable models (those with label != None).
-    Emphasis type: voted among emphasis-capable models (those with emphasis != None).
+    Emphasis type: voted among emphasis-capable models (emphasis_priority > 0); their None counts
+    as "no emphasis" — not abstention. On tie the highest-priority model's value wins.
     """
     n = len(col)
     counts = Counter(key(t.text) if t is not None else None for t in col)
@@ -286,9 +293,19 @@ def vote_column(col: list[Token | None]) -> tuple[str | None, float, bool, dict]
     labels = [t.label for t in col if t is not None and t.label is not None]
     label_vote = Counter(labels).most_common(1)[0][0] if labels else None
 
-    # Emphasis type: emphasis-capable models only (non-None votes)
-    em_values = [t.emphasis for t in col if t is not None and t.emphasis is not None]
-    emphasis_vote = Counter(em_values).most_common(1)[0][0] if em_values else None
+    # Emphasis: capable models only (priority > 0); None = "no emphasis", not abstention.
+    em_capable = [(t.emphasis, t.emphasis_priority) for t in col if t is not None and t.emphasis_priority > 0]
+    if em_capable:
+        count = Counter(v for v, _ in em_capable)
+        top_em_n = count.most_common(1)[0][1]
+        top_em_values = {v for v, n_ in count.items() if n_ == top_em_n}
+        if len(top_em_values) == 1:
+            emphasis_vote = top_em_values.pop()
+        else:
+            best_prio = max(p for _, p in em_capable)
+            emphasis_vote = next(v for v, p in em_capable if p == best_prio)
+    else:
+        emphasis_vote = None
 
     # paragraph_start: block-capable models only (those providing a label)
     para_votes = [t.paragraph_start for t in col if t is not None and t.label is not None]
@@ -309,12 +326,19 @@ def entropy(col: list[Token | None]) -> float:
     return -sum((c / n) * math.log2(c / n) for c in counts.values())
 
 
-def _seq_for_model(page: dict) -> list[Token]:
+_EMPHASIS_PRIORITY: dict[str, int] = {
+    'surya': 1,
+    'qwen3-vl-8b': 2,  # more conservative, wins emphasis ties
+}
+
+
+def _seq_for_model(page: dict, model: str = '') -> list[Token]:
     """Build an attributed token sequence from a model's page dict."""
+    priority = _EMPHASIS_PRIORITY.get(model, 0)
     blocks = page.get('blocks') or []
     if blocks:
-        return normalize_blocks(blocks)
-    return normalize_attributed(page.get('text', ''))
+        return normalize_blocks(blocks, emphasis_priority=priority)
+    return normalize_attributed(page.get('text', ''), emphasis_priority=priority)
 
 
 _HEADER_LABELS = {'PageHeader', 'PageFooter', 'page_number', 'header', 'footer'}
@@ -377,7 +401,7 @@ def consense_page(pages: dict[str, dict], picture_threshold: float = 0.4) -> dic
     max_coverage = max(coverages.values()) if coverages else 0.0
     is_picture_page = max_coverage >= picture_threshold
 
-    seqs = [_seq_for_model(pages[m]) for m in models]
+    seqs = [_seq_for_model(pages[m], model=m) for m in models]
     seqs, models = _drop_outlier_seqs(seqs, models)
     cols = align(seqs)
 
