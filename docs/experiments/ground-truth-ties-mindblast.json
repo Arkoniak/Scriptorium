@@ -1,0 +1,242 @@
+{
+  "book": "mindblast",
+  "validated_by": "manual review 2026-06-29",
+  "note": "Ground truth for content disagreements manually validated against the printed book. Used to evaluate tie-breaker models (see issue #28). consensus_correct=true means the current 4-VLM consensus already has the right answer; false means it does not.",
+  "cases": [
+    {
+      "page": 52,
+      "correct": "damndest",
+      "consensus_winner": "damndest",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "damnest",
+        "unlimited-ocr": "damnedest",
+        "qwen3-vl-8b": "damndest",
+        "glm-ocr": "damndest"
+      },
+      "note": "Surya spell-checked to damnest. Consensus (3-vs-1) correctly recovered damndest."
+    },
+    {
+      "page": 52,
+      "correct": "and’—aah,",
+      "consensus_winner": "and’—aah,",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "and—aah,",
+        "unlimited-ocr": "and’—aah,",
+        "qwen3-vl-8b": "and’—aah,",
+        "glm-ocr": "and’—aah,"
+      },
+      "note": "Surya dropped the apostrophe before the em-dash. Consensus (3-vs-1) correct."
+    },
+    {
+      "page": 124,
+      "correct": "“Don’",
+      "consensus_winner": "“Don’",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "“Don’t",
+        "unlimited-ocr": "“Don’",
+        "qwen3-vl-8b": "“Don’",
+        "glm-ocr": "“Don’"
+      },
+      "note": "Character speaks broken English deliberately (drops the t). Surya spell-checked. Consensus (3-vs-1) correct."
+    },
+    {
+      "page": 127,
+      "correct": "aid,",
+      "consensus_winner": "aid,",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "said,",
+        "unlimited-ocr": "aid,",
+        "qwen3-vl-8b": "aid,",
+        "glm-ocr": "aid,"
+      },
+      "note": "Original typo in the printed book (uncorrected by the editor). Surya spell-checked to said. Consensus (3-vs-1) correctly preserved the typo."
+    },
+    {
+      "page": 173,
+      "correct": "vidcassette",
+      "consensus_winner": "vid-cassette",
+      "consensus_correct": "unclear",
+      "variants": {
+        "surya": "video",
+        "unlimited-ocr": "vid-cassette",
+        "qwen3-vl-8b": "vid-cassette",
+        "glm-ocr": "vidcassette"
+      },
+      "note": "Line-break hyphenation case: the word splits as vid- / cassette across lines so the unhyphenated form vidcassette is likely canonical. Author uses similar compounds without hyphens (see vidshooter p173). Surya wrong (read video). Correct form needs frequency analysis across book."
+    },
+    {
+      "page": 173,
+      "correct": "vidshooter",
+      "consensus_winner": "vidshooter",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "video",
+        "unlimited-ocr": "vidshooter",
+        "qwen3-vl-8b": "vidshooter",
+        "glm-ocr": "vidshooter"
+      },
+      "note": "Sci-fi compound neologism. Surya normalised to video. Consensus (3-vs-1) correct."
+    },
+    {
+      "page": 217,
+      "correct": "bat-thing.",
+      "consensus_winner": "bat-thing.",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "batting.",
+        "unlimited-ocr": "bathing.",
+        "qwen3-vl-8b": "bat-thing.",
+        "glm-ocr": "bat-thing."
+      },
+      "note": "Character cannot remember the word Batman and calls it bat-thing. Surya merged tokens and changed the word. Consensus (2-vs-2, Surya side lost) correct."
+    },
+    {
+      "page": 15,
+      "correct": "receipted:",
+      "consensus_winner": "receipted:",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "receipted:",
+        "unlimited-ocr": "received:",
+        "qwen3-vl-8b": "received:",
+        "glm-ocr": "receipted:"
+      },
+      "note": "2-vs-2 tie. Surya+GLM correct. receipted is the word in the original."
+    },
+    {
+      "page": 101,
+      "correct": "creds",
+      "consensus_winner": "creds",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "creds",
+        "unlimited-ocr": "credits",
+        "qwen3-vl-8b": "creds",
+        "glm-ocr": "credits"
+      },
+      "note": "2-vs-2 tie. Sci-fi slang for credits (currency). Surya+Qwen correct. Unlimited+GLM spell-checked."
+    },
+    {
+      "page": 123,
+      "correct": "raied",
+      "consensus_winner": "raied",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "raied",
+        "unlimited-ocr": "raised",
+        "qwen3-vl-8b": "raised",
+        "glm-ocr": "raied"
+      },
+      "note": "2-vs-2 tie. Original typo in the printed book. Surya+GLM correctly preserved it. Unlimited+Qwen spell-checked to raised."
+    },
+    {
+      "page": 130,
+      "correct": "“Suspicions,",
+      "consensus_winner": "“Suspicions,",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "“Suspicions,",
+        "unlimited-ocr": "“Suspicious,",
+        "qwen3-vl-8b": "“Suspicious,",
+        "glm-ocr": "“Suspicions,"
+      },
+      "note": "2-vs-2 tie. Suspicions is the correct word. Unlimited+Qwen read Suspicious (different word)."
+    },
+    {
+      "page": 163,
+      "correct": "creds",
+      "consensus_winner": "creds",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "creds",
+        "unlimited-ocr": "credits",
+        "qwen3-vl-8b": "creds",
+        "glm-ocr": "credits"
+      },
+      "note": "2-vs-2 tie. Same pattern as p101."
+    },
+    {
+      "page": 178,
+      "correct": "creds.",
+      "consensus_winner": "creds.",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "creds.",
+        "unlimited-ocr": "credits.",
+        "qwen3-vl-8b": "creds.",
+        "glm-ocr": "credits."
+      },
+      "note": "2-vs-2 tie. Same pattern as p101/p163."
+    },
+    {
+      "page": 181,
+      "correct": "unmistakeable",
+      "consensus_winner": "unmistakeable",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "unmistakeable",
+        "unlimited-ocr": "unmistakable",
+        "qwen3-vl-8b": "unmistakable",
+        "glm-ocr": "unmistakeable"
+      },
+      "note": "2-vs-2 tie. British spelling unmistakeable is in the original. Both spellings are valid but the book uses the British form."
+    },
+    {
+      "page": 221,
+      "correct": "Don’",
+      "consensus_winner": "“Don’t",
+      "consensus_correct": false,
+      "variants": {
+        "surya": "“Don’t",
+        "unlimited-ocr": "“’Don’",
+        "qwen3-vl-8b": "“Don’t",
+        "glm-ocr": "‘‘Don’"
+      },
+      "note": "2-vs-2 tie. CONSENSUS IS WRONG. Same character as p124 speaking broken English without the t. Surya+Qwen spell-checked to Don't. Correct is Don' (the t is absent in the book). This is the primary test case for the tie-breaker: a 5th model reading the glyph directly should see no t."
+    },
+    {
+      "page": 252,
+      "correct": "neuotransmitter",
+      "consensus_winner": "neuotransmitter",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "neuotransmitter",
+        "unlimited-ocr": "neurotransmitter",
+        "qwen3-vl-8b": "neurotransmitter",
+        "glm-ocr": "neuotransmitter"
+      },
+      "note": "2-vs-2 tie. Original typo in the printed book (missing r). Surya+GLM correctly preserved it. Unlimited+Qwen spell-checked. Consensus correct."
+    },
+    {
+      "page": 256,
+      "correct": "creds",
+      "consensus_winner": "creds",
+      "consensus_correct": true,
+      "variants": {
+        "surya": "creds",
+        "unlimited-ocr": "credits",
+        "qwen3-vl-8b": "creds",
+        "glm-ocr": "credits"
+      },
+      "note": "2-vs-2 tie. Same pattern as p101/p163/p178."
+    }
+  ],
+  "excluded_pages": [
+    {"page": 1, "reason": "Title/copyright page — non-narrative content, all models unreliable"},
+    {"page": 2, "reason": "ISBN/barcode page — non-narrative content"},
+    {"page": 260, "reason": "Back cover — partially obscured text, non-narrative content"}
+  ],
+  "summary": {
+    "total_validated": 17,
+    "consensus_correct": 15,
+    "consensus_wrong": 1,
+    "consensus_unclear": 1,
+    "known_wrong_cases": [
+      {"page": 221, "current_winner": "Don’t", "correct": "Don’"}
+    ]
+  }
+}
