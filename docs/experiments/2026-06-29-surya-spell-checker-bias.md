@@ -41,6 +41,37 @@ The two `video` cases on p173 are also notable: the book uses invented compound 
 `vidshooter`). Surya appears to pull toward familiar vocabulary under uncertainty. `vid-cassette` is
 a hyphenated-across-line-break case where the correct form may be `vidcassette` (see below).
 
+## 50/50 tie audit (2026-06-29)
+
+Of the 101 content disagreements at 50% agreement, **36 are won by Surya's side** (by insertion-order
+tiebreaking in `Counter.most_common()`). All 36 reviewed manually.
+
+Result: **35/36 correct, 1/36 wrong.**
+
+The one wrong case: **p221** `"Don't` — Surya+Qwen read `Don't`, Unlimited+GLM read `"'Don'`/`''Don'`.
+Correct answer is `Don'` (the character speaks broken English deliberately, dropping the `t`). Consensus
+picked Surya's spell-corrected version.
+
+Revised picture of the 36 ties:
+- **p001** (12 ties) — title/copyright page, unreliable by design; excluded from body text in practice.
+- **p172/173** `Ivar` vs `lvar` — Surya+Unlimited correct; Qwen+GLM confused capital `I` with lowercase `l`.
+- **p101/163/178/256** `creds` vs `credits` — Surya+Qwen correct; sci-fi currency slang, Unlimited+GLM spell-checked to `credits`.
+- **p181** `unmistakeable` vs `unmistakable` — Surya+GLM have the British spelling from the original; both valid.
+- **p015** `receipted:` vs `received:` — Surya+GLM correct.
+- **p130** `"Suspicions,` vs `"Suspicious,` — Surya+GLM correct.
+- **p252** `neuotransmitter` vs `neurotransmitter` — **Surya+GLM correctly preserved an original typo**; Unlimited+Qwen spell-checked to `neurotransmitter`. Consensus correctly preserved the typo.
+- **p123** `raied` vs `raised` — same: **original typo in the book**; Surya+GLM faithful, Unlimited+Qwen spell-checked.
+- Remaining ties: isolated punctuation/quote disagreements, no semantic content.
+
+**Key revision**: the spell-checker behavior is not unique to Surya. Unlimited and Qwen also
+spell-check — they normalised `raied`→`raised` and `neuotransmitter`→`neurotransmitter`. Surya's
+spell-checker failures are concentrated on a different class: **composite neologisms** (`vid-cassette`,
+`vidshooter`, `bat-thing`) and **non-standard dialect** (`Don't`/`Don'`). Unlimited/Qwen fail on
+**ordinary-word typos** that happen to resemble real words.
+
+The 50/50 position bias is therefore largely benign in practice: Surya wins tiebreaks correctly 35/36
+times on this book. The one loss (p221) would be caught by a 5th tie-breaking model.
+
 ## Open questions
 
 **`vid-cassette` vs `vidcassette`**: if the word breaks across a line as `vid-` / `cassette`, our
@@ -48,31 +79,25 @@ a hyphenated-across-line-break case where the correct form may be `vidcassette` 
 it as a single hyphenated token). Frequency analysis across the full book would determine the
 author's canonical spelling — currently unknown.
 
-**50/50 tie bias**: 101 of 783 content disagreements are at 50% agreement (2-vs-2 split). In these,
-the winner is chosen by `Counter.most_common()` which, for equal counts, follows dict insertion order
-— i.e., whoever comes first in the `models` list. Surya is currently first. This means Surya
-effectively wins all 2-vs-2 ties by position, not by quality. Some of those ties may be cases where
-Surya's spell-checker tendency pulls two models the "corrected" way while two others read the original.
-Unquantified but worth auditing, especially for neologisms and proper nouns.
-
-**Undetected corrections**: if Surya normalizes a word and all three other models happen to agree
-(e.g., a common English word that all models converge on), the correction is invisible to the
-disagreement report. Ground truth would be needed to catch these.
+**Undetected corrections**: if all 4 models normalise the same word the same way (unanimous), the
+change is invisible to the disagreement report. Ground truth would be needed to catch these.
 
 ## Conclusion
 
-Surya is the most consensus-aligned model (18 lone dissents in the original analysis, 11 real semantic
-divergences after full-book audit), but its divergences follow a consistent pattern: **it behaves as a
-spell-checker**, normalising unusual words, invented compounds, and original typos toward familiar
-English. This is harmful for faithful transcription — see `docs/brainstorm.md` (Stage 1 Key Tensions:
-hallucination vs. missing text).
+Surya is the most consensus-aligned model, and after auditing the 2-vs-2 ties its tiebreak choices
+are reliable (35/36). The spell-checker behavior is real but narrow — composite neologisms and
+non-standard dialect — not a general problem. Unlimited and Qwen have a parallel spell-checker
+tendency on ordinary-word typos.
 
-Mitigations to consider:
-1. Audit 2-vs-2 tie cases for Surya-leads-normalization pattern.
-2. For neologism-heavy sci-fi text, consider downweighting Surya in the tiebreaker (or randomising
-   position rather than putting Surya first).
-3. Frequency analysis across pages for recurring compound words (would also resolve `vid-cassette`).
-4. Pages 1–2 (cover, copyright/ISBN) and 260 (back cover) probably should be excluded from body text
-   processing — they have non-narrative content and all models perform poorly on them.
+The structural fix for the one failure class (p221-style broken English) is a **5th tie-breaking
+model** that reads the page independently. The key property needed: faithfulness to what is on the
+page, without language-model priors pushing toward standard spellings. Classical OCR (Tesseract or
+similar) is a strong candidate — it has no learned English bias, is deterministic, and is cheap to
+run as a supplementary signal on contested slots only.
+
+Remaining mitigations:
+1. Frequency analysis across pages for recurring compound words (resolves `vid-cassette`).
+2. Pages 1–2 (cover, copyright/ISBN) and 260 (back cover) should be excluded from body text
+   processing — all models perform poorly on them and they are not narrative content.
 
 Rationale: known.
