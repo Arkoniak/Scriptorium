@@ -204,23 +204,19 @@ def _is_separator_element(tokens: list[dict]) -> bool:
     return bool(text and _SEPARATOR_RE.match(text))
 
 
-def render_element(element: dict, scene_break_pages: set[int] | None = None) -> str:
-    """Render one element dict to an HTML string.
-
-    scene_break_pages: set of page numbers where picture elements are scene-break ornaments.
-    If provided and element['page'] is in the set, a picture element becomes <hr>.
-    """
+def render_element(element: dict) -> str:
+    """Render one element dict to an HTML string."""
     label = element['label']
     tokens = element['tokens']
+
+    if label == 'hr':
+        return '<hr>'
 
     # Typographic scene break: '* * *' / '***' / '• • •' etc.
     if label == 'text' and _is_separator_element(tokens):
         return '<hr>'
 
     if label == 'picture':
-        page = element.get('page')
-        if scene_break_pages and page in scene_break_pages:
-            return '<hr>'
         return '<!-- picture: illustration -->'
 
     tag = _LABEL_TO_TAG.get(label, 'p')
@@ -229,25 +225,79 @@ def render_element(element: dict, scene_break_pages: set[int] | None = None) -> 
 
 
 # ---------------------------------------------------------------------------
+# Scene-break insertion
+# ---------------------------------------------------------------------------
+
+# Labels excluded when counting paragraph blocks for scene-break position mapping.
+_PARA_SKIP_LABELS = {
+    'PageHeader', 'PageFooter', 'page_number', 'header', 'footer',
+    'Picture', 'image', 'Title', 'SectionHeader', 'title', 'heading',
+}
+# Blocks with x0 > this threshold are centred/decorative, not paragraph text.
+_X_THRESHOLD = 0.25
+
+
+def _para_blocks_before(voted_blocks: list[dict], y_top: float) -> int:
+    """Count left-aligned paragraph blocks whose centre is above y_top.
+
+    Uses block centre rather than y_bot to handle the common case where Surya's
+    last paragraph block slightly overlaps the ornament's top edge.
+    """
+    return sum(
+        1 for b in voted_blocks
+        if b.get('bbox')
+        and b.get('label') not in _PARA_SKIP_LABELS
+        and b['bbox'][0] < _X_THRESHOLD
+        and (b['bbox'][1] + b['bbox'][3]) / 2 < y_top
+    )
+
+
+def _insert_scene_breaks(elements: list[dict], breaks: list[dict], page_data: dict) -> list[dict]:
+    """Insert {'label': 'hr', 'tokens': []} markers at scene-break positions.
+
+    Uses voted_blocks_surya geometry to map each break's y_top to a paragraph
+    index, then inserts the marker after that paragraph in the element list.
+    Ornament Picture blocks carry no text tokens and never appear in elements,
+    so spatial mapping via voted_blocks is the only way to find the right position.
+    See docs/brainstorm-scene-break.md §6 (pipeline integration).
+    """
+    if not breaks:
+        return elements
+
+    blocks = page_data.get('voted_blocks_surya') or page_data.get('voted_blocks_unlimited') or []
+    text_indices = [i for i, el in enumerate(elements) if el['label'] == 'text']
+
+    inserts: list[tuple[int, dict]] = []
+    for brk in breaks:
+        n_before = _para_blocks_before(blocks, brk['y_top'])
+        if n_before == 0:
+            pos = 0
+        elif n_before >= len(text_indices):
+            pos = len(elements)
+        else:
+            pos = text_indices[n_before - 1] + 1
+        inserts.append((pos, {'label': 'hr', 'tokens': []}))
+
+    result = list(elements)
+    for pos, el in sorted(inserts, key=lambda x: x[0], reverse=True):
+        result.insert(pos, el)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Book-level assembly
 # ---------------------------------------------------------------------------
 
-def _tag_picture_elements(elements: list[dict], page_no: int) -> list[dict]:
-    """Attach page number to picture elements so render_element can look up scene breaks."""
-    for el in elements:
-        if el['label'] == 'picture':
-            el['page'] = page_no
-    return elements
-
-
 def build_book_html(
     page_results: list[dict],
-    scene_break_pages: set[int] | None = None,
+    scene_breaks: list[dict] | None = None,
 ) -> tuple[str, list[dict]]:
     """Convert ordered page results (from consensus) to a full book HTML string.
 
-    scene_break_pages: set of page numbers where picture elements are scene-break ornaments
-    (from scene_breaks.json). If None, picture elements are rendered as HTML comments.
+    scene_breaks: list of scene-break entries from scene_breaks.json (produced by
+    detect_scene_breaks.py). Each entry has 'page', 'y_top', 'y_bot', 'classification'.
+    If provided, <hr> markers are inserted at the correct intra-page positions using
+    voted_blocks_surya geometry. If None, no scene breaks are emitted.
 
     Returns (html_string, list_of_stitching_decisions).
     Each decision: {from_page, to_page, last_word, first_word, decision, gap?}.
@@ -259,17 +309,26 @@ def build_book_html(
     if not text_pages:
         return '', []
 
+    breaks_by_page: dict[int, list[dict]] = {}
+    for e in (scene_breaks or []):
+        if e.get('classification') == 'scene_break':
+            breaks_by_page.setdefault(e['page'], []).append(e)
+
     all_decisions: list[dict] = []
-    first_page_no = text_pages[0]['page']
-    all_elements = _tag_picture_elements(
-        extract_elements(text_pages[0].get('voted_tokens', [])), first_page_no
+    first_page = text_pages[0]
+    all_elements = _insert_scene_breaks(
+        extract_elements(first_page.get('voted_tokens', [])),
+        breaks_by_page.get(first_page['page'], []),
+        first_page,
     )
 
     for i in range(1, len(text_pages)):
         prev = text_pages[i - 1]
         curr = text_pages[i]
-        next_elements = _tag_picture_elements(
-            extract_elements(curr.get('voted_tokens', [])), curr['page']
+        next_elements = _insert_scene_breaks(
+            extract_elements(curr.get('voted_tokens', [])),
+            breaks_by_page.get(curr['page'], []),
+            curr,
         )
 
         gap = curr['page'] - prev['page'] > 1
@@ -283,7 +342,7 @@ def build_book_html(
             all_elements, decision = stitch_boundary(all_elements, next_elements)
             all_decisions.append({'from_page': prev['page'], 'to_page': curr['page'], **decision})
 
-    html_parts = [render_element(el, scene_break_pages=scene_break_pages) for el in all_elements]
+    html_parts = [render_element(el) for el in all_elements]
     return '\n'.join(html_parts), all_decisions
 
 
@@ -308,15 +367,13 @@ def main() -> None:
 
     # Load scene breaks if available (produced by detect_scene_breaks.py).
     scene_breaks_path = consensus_dir / 'scene_breaks.json'
-    scene_break_pages: set[int] | None = None
+    scene_breaks: list[dict] | None = None
     if scene_breaks_path.exists():
-        breaks = json.loads(scene_breaks_path.read_text(encoding='utf-8'))
-        scene_break_pages = {
-            e['page'] for e in breaks if e.get('classification') == 'scene_break'
-        }
-        print(f'Loaded {len(scene_break_pages)} scene-break page(s) from {scene_breaks_path.name}')
+        scene_breaks = json.loads(scene_breaks_path.read_text(encoding='utf-8'))
+        n_pages = len({e['page'] for e in scene_breaks if e.get('classification') == 'scene_break'})
+        print(f'Loaded {len(scene_breaks)} scene break(s) on {n_pages} page(s) from {scene_breaks_path.name}')
 
-    book_html, decisions = build_book_html(page_results, scene_break_pages=scene_break_pages)
+    book_html, decisions = build_book_html(page_results, scene_breaks=scene_breaks)
 
     (consensus_dir / 'book.html').write_text(book_html + '\n', encoding='utf-8')
     (consensus_dir / 'stitching_decisions.json').write_text(
