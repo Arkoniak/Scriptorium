@@ -344,6 +344,48 @@ def _seq_for_model(page: dict, model: str = '') -> list[Token]:
 _HEADER_LABELS = {'PageHeader', 'PageFooter', 'page_number', 'header', 'footer'}
 _PICTURE_LABELS = {'Picture', 'image'}  # Surya: 'Picture', Unlimited-OCR grounding: 'image'
 
+# Models that emit structured blocks with absolute-pixel bboxes.
+# Key = model name in manifest; value = field suffix in voted_blocks_<suffix>.
+_BLOCK_MODELS: dict[str, str] = {'surya': 'surya', 'unlimited-ocr': 'unlimited'}
+
+
+def _page_dims(pages: dict[str, dict]) -> tuple[float, float]:
+    """Return (page_width_px, page_height_px) from any model page that has image_bbox.
+
+    Falls back to inferring from the maximum block coordinates across all models.
+    """
+    for page in pages.values():
+        bbox = page.get('image_bbox')
+        if bbox:
+            return float(bbox[2] - bbox[0]) or 1.0, float(bbox[3] - bbox[1]) or 1.0
+    xs, ys = [], []
+    for page in pages.values():
+        for b in page.get('blocks') or []:
+            if 'bbox' in b:
+                xs.append(b['bbox'][2])
+                ys.append(b['bbox'][3])
+    return float(max(xs, default=1000.0)), float(max(ys, default=1000.0))
+
+
+def _extract_layout_blocks(page: dict, pw: float, ph: float) -> list[dict]:
+    """Extract layout blocks from one model's page dict, with bbox normalised to [0, 1].
+
+    Excludes PageHeader/PageFooter blocks. Keeps Picture/image blocks (needed for scene-break
+    detection). Both Surya and Unlimited use absolute pixel coordinates; pw/ph are the reference
+    page dimensions (from _page_dims). See docs/brainstorm-scene-break.md §6 (pipeline integration).
+    """
+    result = []
+    for block in page.get('blocks') or []:
+        if block.get('label') in _HEADER_LABELS or 'bbox' not in block:
+            continue
+        x0, y0, x1, y1 = block['bbox']
+        result.append({
+            'label': block['label'],
+            'bbox': [round(x0 / pw, 4), round(y0 / ph, 4),
+                     round(x1 / pw, 4), round(y1 / ph, 4)],
+        })
+    return result
+
 
 def _drop_outlier_seqs(seqs: list[list[Token]], models: list[str]) -> tuple[list[list[Token]], list[str]]:
     """Drop models whose token count exceeds 10x the median by more than 100 tokens.
@@ -440,7 +482,7 @@ def consense_page(pages: dict[str, dict], picture_threshold: float = 0.4) -> dic
     n_cols = len(cols) or 1
     n_content_cols = len(cols) - n_header_cols
     n_content_dis = sum(1 for d in disagreements if d.get('label') not in _HEADER_LABELS)
-    return {
+    result: dict = {
         'models': models,
         'n_columns': len(cols),
         'n_header_columns': n_header_cols,
@@ -457,6 +499,20 @@ def consense_page(pages: dict[str, dict], picture_threshold: float = 0.4) -> dic
         'picture_coverage_per_model': {m: round(coverages[m], 4) for m in coverages},
         'disagreements': disagreements,
     }
+
+    # Per-model layout blocks for geometric analysis (scene-break detection, gap calibration).
+    # Only populated for models that emit structured blocks with bboxes (Surya, Unlimited grounding).
+    # Both models use absolute pixel coordinates; normalised to [0,1] using Surya's image_bbox.
+    # See docs/brainstorm-scene-break.md §6 and issue #22.
+    pw, ph = _page_dims(pages)
+    for model_name, page in pages.items():
+        key = _BLOCK_MODELS.get(model_name)
+        if key and page.get('blocks'):
+            blocks = _extract_layout_blocks(page, pw, ph)
+            if blocks:
+                result[f'voted_blocks_{key}'] = blocks
+
+    return result
 
 
 # --- run discovery + driver ------------------------------------------------------------------------
