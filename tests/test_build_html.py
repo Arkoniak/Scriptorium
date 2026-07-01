@@ -1,6 +1,7 @@
 from scripts.build_html import (
     canonical_label, classify_boundary, extract_elements,
     stitch_boundary, render_tokens, render_element, build_book_html,
+    detect_quote_style, normalize_typography,
 )
 
 
@@ -269,13 +270,100 @@ class TestRenderElement:
 
 
 # ---------------------------------------------------------------------------
+# detect_quote_style() + normalize_typography()
+# ---------------------------------------------------------------------------
+
+def _pg_toks(*texts):
+    return {'voted_tokens': [{'text': t} for t in texts], 'picture_page': False}
+
+
+class TestDetectQuoteStyle:
+    def test_curly_majority(self):
+        pages = [_pg_toks('“Hello”', '“world”')]
+        assert detect_quote_style(pages) == 'curly'
+
+    def test_straight_majority(self):
+        pages = [_pg_toks('"Hello"', '"world"')]
+        assert detect_quote_style(pages) == 'straight'
+
+    def test_mixed_curly_wins(self):
+        pages = [_pg_toks('“A”', '“B”', '"C"')]
+        assert detect_quote_style(pages) == 'curly'
+
+    def test_empty(self):
+        assert detect_quote_style([]) == 'straight'
+
+
+def _el_from_texts(*texts):
+    tokens = [{'text': t, 'emphasis': None, 'paragraph_start': False} for t in texts]
+    return {'label': 'text', 'tokens': tokens}
+
+
+class TestNormalizeTypography:
+    def test_straight_double_to_curly(self):
+        els = [_el_from_texts('"Hello', 'world"')]
+        result, changed = normalize_typography(els)
+        assert result[0]['tokens'][0]['text'] == '“Hello'
+        assert result[0]['tokens'][1]['text'] == 'world”'
+        assert changed == 2
+
+    def test_open_close_alternation(self):
+        els = [_el_from_texts('"one"', '"two"')]
+        result, _ = normalize_typography(els)
+        assert result[0]['tokens'][0]['text'] == '“one”'
+        assert result[0]['tokens'][1]['text'] == '“two”'
+
+    def test_apostrophe_mid_word(self):
+        els = [_el_from_texts("don't", "it's")]
+        result, changed = normalize_typography(els)
+        assert result[0]['tokens'][0]['text'] == 'don’t'
+        assert result[0]['tokens'][1]['text'] == 'it’s'
+        assert changed == 2
+
+    def test_state_carries_across_elements(self):
+        els = [_el_from_texts('"open'), _el_from_texts('close"')]
+        result, changed = normalize_typography(els)
+        assert result[0]['tokens'][0]['text'] == '“open'
+        assert result[1]['tokens'][0]['text'] == 'close”'
+        assert changed == 2
+
+    def test_no_change_for_already_curly(self):
+        els = [_el_from_texts('“hello”')]
+        result, changed = normalize_typography(els)
+        assert changed == 0
+        assert result[0]['tokens'][0]['text'] == '“hello”'
+
+    def test_empty_elements(self):
+        result, changed = normalize_typography([])
+        assert result == []
+        assert changed == 0
+
+    def test_stats_in_build_book_html_curly(self):
+        # 4 curly chars (2 tokens × 2) vs 1 straight → style=curly, straight one normalised
+        pages = [_page(1, [
+            _tok('”hello”', 'Text', paragraph_start=True),  # 2 curly chars
+            _tok('”world”', 'Text'),                              # 2 curly chars
+            _tok('\x22plain', 'Text'),                            # 1 straight → normalised
+        ])]
+        _, _, stats = build_book_html(pages)
+        assert stats['quote_style'] == 'curly'
+        assert stats['typo_tokens_changed'] == 1
+
+    def test_stats_straight_book_no_change(self):
+        pages = [_page(1, [_tok('\x22hello\x22', 'Text', paragraph_start=True)])]
+        _, _, stats = build_book_html(pages)
+        assert stats['quote_style'] == 'straight'
+        assert stats['typo_tokens_changed'] == 0
+
+
+# ---------------------------------------------------------------------------
 # build_book_html() integration
 # ---------------------------------------------------------------------------
 
 class TestBuildBookHtml:
     def test_single_page(self):
         pages = [_page(1, [_tok('hello', 'Text', paragraph_start=True), _tok('world', 'Text')])]
-        html, decisions = build_book_html(pages)
+        html, decisions, _ = build_book_html(pages)
         assert '<p>hello world</p>' in html
         assert decisions == []
 
@@ -284,7 +372,7 @@ class TestBuildBookHtml:
             _page(1, [_tok('he', 'Text', paragraph_start=True), _tok('said', 'Text')]),
             _page(2, [_tok('nothing', 'Text', paragraph_start=True)]),
         ]
-        html, decisions = build_book_html(pages)
+        html, decisions, _ = build_book_html(pages)
         assert '<p>he said nothing</p>' in html
         assert decisions[0]['decision'] == 'paragraph_continuation'
 
@@ -293,7 +381,7 @@ class TestBuildBookHtml:
             _page(1, [_tok('weight-', 'Text', paragraph_start=True)]),
             _page(2, [_tok('less', 'Text', paragraph_start=True), _tok('here', 'Text')]),
         ]
-        html, decisions = build_book_html(pages)
+        html, decisions, _ = build_book_html(pages)
         assert 'weightless' in html
         assert decisions[0]['decision'] == 'word_split'
 
@@ -302,7 +390,7 @@ class TestBuildBookHtml:
             _page(1, [_tok('He', 'Text', paragraph_start=True), _tok('said.', 'Text')]),
             _page(2, [_tok('She', 'Text', paragraph_start=True), _tok('left.', 'Text')]),
         ]
-        html, decisions = build_book_html(pages)
+        html, decisions, _ = build_book_html(pages)
         assert '<p>He said.</p>' in html
         assert '<p>She left.</p>' in html
         assert decisions[0]['decision'] == 'new_paragraph'
@@ -313,7 +401,7 @@ class TestBuildBookHtml:
             _page(2, [], picture=True),
             _page(3, [_tok('after', 'Text', paragraph_start=True)]),
         ]
-        html, decisions = build_book_html(pages)
+        html, decisions, _ = build_book_html(pages)
         assert 'before' in html
         assert 'after' in html
         assert decisions[0].get('gap') is True
@@ -326,11 +414,11 @@ class TestBuildBookHtml:
             _tok('Body', 'Text', paragraph_start=True),
             _tok('text', 'Text'),
         ])]
-        html, _ = build_book_html(pages)
+        html, _, __ = build_book_html(pages)
         assert '<h1>Chapter One</h1>' in html
         assert '<p>Body text</p>' in html
 
     def test_empty_input(self):
-        html, decisions = build_book_html([])
+        html, decisions, _ = build_book_html([])
         assert html == ''
         assert decisions == []
