@@ -4,13 +4,13 @@
 Reads voted_tokens from consensus pages (books/output/<book>/consensus/<suffix>/pages/),
 normalizes layout labels (Surya/Unlimited → canonical), groups tokens into HTML elements
 (paragraphs, headings, etc.), wraps emphasis spans, applies cross-page stitching at paragraph
-boundaries, and emits book.html ready for Pandoc → EPUB3 conversion.
+boundaries, normalizes typography (issue #21), and emits book.html ready for Pandoc → EPUB3
+conversion.
 
 Design: docs/brainstorm.md § Layer 4 (EPUB assembly via Pandoc, HTML canonical).
 Part of issue #30 (enriched voted_tokens + HTML assembler).
 
-Cross-page stitching (issue #20), typography normalization (#21), and scene-break detection (#22)
-will be wired in here as this script matures.
+Scene-break detection (#22) will be wired in here as this script matures.
 """
 
 import argparse
@@ -225,6 +225,79 @@ def render_element(element: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Typography normalization (issue #21)
+# ---------------------------------------------------------------------------
+
+def detect_quote_style(page_results: list[dict]) -> str:
+    """Return 'curly' if the majority of double-quote chars in voted_tokens are curly, else 'straight'.
+
+    A printed book uses one consistent quotation style throughout; any straight quotes in voted_tokens
+    are OCR transcription errors. If curly quotes dominate, we normalise the rest to match.
+    See issue #21 design comment for the empirical basis.
+    """
+    curly = straight = 0
+    for page in page_results:
+        for tok in page.get('voted_tokens', []):
+            t = tok.get('text', '')
+            curly += t.count('“') + t.count('”')
+            straight += t.count('"')
+    return 'curly' if curly > straight else 'straight'
+
+
+def _apply_quote_norm(text: str, dq_open: bool, sq_open: bool) -> tuple[str, bool, bool]:
+    """Convert straight ASCII quotes to curly in one token, threading open/close state through.
+
+    Double quotes: stateful toggle — " becomes " (open) or " (close).
+    Single quotes: mid-word after a letter → ' (apostrophe/right single); otherwise stateful.
+    Returns (normalised_text, new_dq_open, new_sq_open).
+    """
+    result: list[str] = []
+    for i, ch in enumerate(text):
+        if ch == '"':
+            if dq_open:
+                result.append('”')  # "
+                dq_open = False
+            else:
+                result.append('“')  # "
+                dq_open = True
+        elif ch == "'":
+            if i > 0 and result and result[-1].isalpha():
+                result.append('’')  # apostrophe (don't, it's, …)
+            elif sq_open:
+                result.append('’')  # closing '
+                sq_open = False
+            else:
+                result.append('‘')  # opening '
+                sq_open = True
+        else:
+            result.append(ch)
+    return ''.join(result), dq_open, sq_open
+
+
+def normalize_typography(elements: list[dict]) -> tuple[list[dict], int]:
+    """Replace straight ASCII quotes with curly quotes across all token texts.
+
+    State (open/close) carries across token and element boundaries so a quote opened in one
+    paragraph is correctly closed in the next. Returns (new_elements, n_tokens_changed).
+    """
+    dq_open = sq_open = False
+    changed = 0
+    result = []
+    for el in elements:
+        new_tokens = []
+        for tok in el.get('tokens', []):
+            orig = tok['text']
+            normalised, dq_open, sq_open = _apply_quote_norm(orig, dq_open, sq_open)
+            if normalised != orig:
+                changed += 1
+                new_tokens.append({**tok, 'text': normalised})
+            else:
+                new_tokens.append(tok)
+        result.append({**el, 'tokens': new_tokens})
+    return result, changed
+
+
+# ---------------------------------------------------------------------------
 # Scene-break insertion
 # ---------------------------------------------------------------------------
 
@@ -291,7 +364,7 @@ def _insert_scene_breaks(elements: list[dict], breaks: list[dict], page_data: di
 def build_book_html(
     page_results: list[dict],
     scene_breaks: list[dict] | None = None,
-) -> tuple[str, list[dict]]:
+) -> tuple[str, list[dict], dict]:
     """Convert ordered page results (from consensus) to a full book HTML string.
 
     scene_breaks: list of scene-break entries from scene_breaks.json (produced by
@@ -299,15 +372,18 @@ def build_book_html(
     If provided, <hr> markers are inserted at the correct intra-page positions using
     voted_blocks_surya geometry. If None, no scene breaks are emitted.
 
-    Returns (html_string, list_of_stitching_decisions).
+    Returns (html_string, list_of_stitching_decisions, stats_dict).
     Each decision: {from_page, to_page, last_word, first_word, decision, gap?}.
+    stats_dict: {'quote_style': 'curly'|'straight', 'typo_tokens_changed': int}.
     """
+    quote_style = detect_quote_style(page_results)
+
     text_pages = [
         p for p in sorted(page_results, key=lambda x: x['page'])
         if not p.get('picture_page') and p.get('voted_tokens')
     ]
     if not text_pages:
-        return '', []
+        return '', [], {'quote_style': quote_style, 'typo_tokens_changed': 0}
 
     breaks_by_page: dict[int, list[dict]] = {}
     for e in (scene_breaks or []):
@@ -342,8 +418,13 @@ def build_book_html(
             all_elements, decision = stitch_boundary(all_elements, next_elements)
             all_decisions.append({'from_page': prev['page'], 'to_page': curr['page'], **decision})
 
+    typo_changed = 0
+    if quote_style == 'curly':
+        all_elements, typo_changed = normalize_typography(all_elements)
+
     html_parts = [render_element(el) for el in all_elements]
-    return '\n'.join(html_parts), all_decisions
+    stats = {'quote_style': quote_style, 'typo_tokens_changed': typo_changed}
+    return '\n'.join(html_parts), all_decisions, stats
 
 
 def main() -> None:
@@ -373,7 +454,7 @@ def main() -> None:
         n_pages = len({e['page'] for e in scene_breaks if e.get('classification') == 'scene_break'})
         print(f'Loaded {len(scene_breaks)} scene break(s) on {n_pages} page(s) from {scene_breaks_path.name}')
 
-    book_html, decisions = build_book_html(page_results, scene_breaks=scene_breaks)
+    book_html, decisions, stats = build_book_html(page_results, scene_breaks=scene_breaks)
 
     (consensus_dir / 'book.html').write_text(book_html + '\n', encoding='utf-8')
     (consensus_dir / 'stitching_decisions.json').write_text(
@@ -385,6 +466,7 @@ def main() -> None:
     n_para = sum(1 for d in decisions if d['decision'] == 'new_paragraph')
     print(f'Built {consensus_dir / "book.html"} from {len(page_results)} pages')
     print(f'  word_split: {n_word}  paragraph_continuation: {n_cont}  new_paragraph: {n_para}')
+    print(f'  quote style: {stats["quote_style"]}  tokens normalised: {stats["typo_tokens_changed"]}')
 
 
 if __name__ == '__main__':
